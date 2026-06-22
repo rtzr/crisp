@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>ko</string>
+	<key>CFBundleExecutable</key>
+	<string>CrispApp</string>
+	<key>CFBundleIdentifier</key>
+	<string>ai.rtzr.crisp</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Crisp</string>
+	<key>CFBundleDisplayName</key>
+	<string>Crisp</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Crisp는 마이크 입력의 배경 소음을 실시간으로 제거하기 위해 마이크에 접근합니다. 음성은 기기에서만 처리되며 외부로 전송되지 않습니다.</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 RTZR. All rights reserved.</string>
+</dict>
+</plist>
