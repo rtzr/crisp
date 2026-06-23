@@ -1,4 +1,5 @@
 import SwiftUI
+import CrispEngine
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
@@ -22,12 +23,25 @@ struct AudioSettingsView: View {
     var body: some View {
         Form {
             Section("실시간 처리") {
-                Toggle("노이즈 캔슬링 켜기", isOn: $state.isEnabled)
-                Toggle("바이패스 (원본 신호 전달)", isOn: $state.isBypassed)
-                Picker("강도", selection: $state.strength) {
-                    ForEach(NoiseStrength.allCases) { Text($0.label).tag($0) }
+                Toggle("실시간 처리 켜기", isOn: $state.isEnabled)
+                Toggle("바이패스 (원본 신호 전달 · A/B)", isOn: $state.isBypassed)
+                Picker("처리 모드", selection: $state.mode) {
+                    ForEach(ProcessingMode.allCases) { Text($0.label).tag($0) }
                 }
-                Picker("처리 모드", selection: $state.lowLatencyMode) {
+                if state.mode == .noiseCancellation || state.mode == .cleanAndEnhance {
+                    Picker("노이즈 강도", selection: $state.strength) {
+                        ForEach(NoiseStrength.allCases) { Text($0.label).tag($0) }
+                    }
+                }
+                if state.mode.usesEnhancer {
+                    Picker("인핸스 강도", selection: $state.enhanceStrength) {
+                        ForEach(EnhanceStrength.allCases) { Text($0.label).tag($0) }
+                    }
+                    Picker("톤", selection: $state.tonePreset) {
+                        ForEach(TonePreset.allCases) { Text($0.label).tag($0) }
+                    }
+                }
+                Picker("모델 지연", selection: $state.lowLatencyMode) {
                     Text("기본 (고품질)").tag(false)
                     Text("저지연").tag(true)
                 }
@@ -76,6 +90,17 @@ struct DiagnosticsView: View {
             Section("상태") {
                 LabeledContent("엔진", value: statusText)
                 LabeledContent("가상 마이크", value: state.virtualMicInstalled ? "설치됨" : "없음")
+            }
+            Section("처리 설정") {
+                LabeledContent("처리 모드", value: state.mode.label)
+                if state.mode == .noiseCancellation || state.mode == .cleanAndEnhance {
+                    LabeledContent("노이즈 강도", value: state.strength.label)
+                }
+                if state.mode.usesEnhancer {
+                    LabeledContent("인핸스 강도", value: state.enhanceStrength.label)
+                    LabeledContent("톤", value: state.tonePreset.label)
+                }
+                LabeledContent("추정 추가 지연", value: "≈ \(Int(Diagnostics.estimatedLatencyMs(lowLatency: state.lowLatencyMode))) ms")
             }
             Section("진단 로그") {
                 Text("진단 로그에는 음성 원본이 포함되지 않으며, 상태/오류 정보만 기록됩니다. (PRD SET-03)")

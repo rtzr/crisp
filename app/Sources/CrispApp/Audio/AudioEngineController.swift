@@ -7,20 +7,21 @@ import CrispEngine
 private let audioLog = Logger(subsystem: "ai.rtzr.crisp", category: "audio")
 
 protocol AudioEngineControlling: AnyObject {
-    func start(inputUID: String?, strength: NoiseStrength, bypassed: Bool, lowLatency: Bool)
+    func start(config: AudioProcessingConfig, inputUID: String?, lowLatency: Bool)
     func stop()
-    func updateParameters(strength: NoiseStrength, bypassed: Bool)
+    func update(config: AudioProcessingConfig)
 }
 
 /// Live capture engine (PRD 6.2):
-///   physical mic capture → AVAudioConverter(→48k mono) → DeepFilter inference
-///   → ring buffer → AUHAL output → Crisp virtual device → loopback → meeting app
+///   physical mic capture → AVAudioConverter(→48k mono) → two-stage pipeline
+///   (DeepFilter denoise → Voice Enhancer DSP) → ring buffer → AUHAL output
+///   → Crisp virtual device → loopback → meeting app
 ///
 /// Any mic sample rate is supported: the converter normalizes to the model's 48 kHz mono.
 final class LiveAudioEngine: AudioEngineControlling {
     private weak var state: AppState?
     private let engine = AVAudioEngine()
-    private var suppressor: NoiseSuppressor = PassthroughSuppressor()
+    private var pipeline: PipelineProcessor?
     private var output: VirtualMicOutput?
     private var converter: AVAudioConverter?
     private let canonical = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false)!
@@ -31,18 +32,18 @@ final class LiveAudioEngine: AudioEngineControlling {
         self.state = state
     }
 
-    func start(inputUID: String?, strength: NoiseStrength, bypassed: Bool, lowLatency: Bool) {
+    func start(config: AudioProcessingConfig, inputUID: String?, lowLatency: Bool) {
         requestMicAccess { [weak self] granted in
             guard let self else { return }
             guard granted else {
                 self.setStatus(.error("마이크 권한이 거부되었습니다."))
                 return
             }
-            self.startLocked(inputUID: inputUID, strength: strength, bypassed: bypassed, lowLatency: lowLatency)
+            self.startLocked(config: config, inputUID: inputUID, lowLatency: lowLatency)
         }
     }
 
-    private func startLocked(inputUID: String?, strength: NoiseStrength, bypassed: Bool, lowLatency: Bool) {
+    private func startLocked(config: AudioProcessingConfig, inputUID: String?, lowLatency: Bool) {
         stop()
 
         if let uid = inputUID, let deviceID = Self.deviceID(forUID: uid) {
@@ -56,18 +57,20 @@ final class LiveAudioEngine: AudioEngineControlling {
             return
         }
 
-        // DeepFilter model: low-latency or full quality (PRD SET-01). Load here (not RT-safe).
+        // Noise Cancellation stage: DeepFilter model, low-latency or full (PRD SET-01).
+        // Load here (not RT-safe); fall back to passthrough if it fails.
         let model: DeepFilterSuppressor.Model = lowLatency ? .lowLatency : .full
+        let suppressor: NoiseSuppressor
         if let modelPath = DeepFilterSuppressor.modelPath(model),
-           let df = DeepFilterSuppressor(modelPath: modelPath,
-                                         attenuationLimitDb: strength.attenuationLimitDb,
-                                         bypassed: bypassed) {
+           let df = DeepFilterSuppressor(modelPath: modelPath) {
             suppressor = df
         } else {
             suppressor = PassthroughSuppressor()
         }
-        suppressor.attenuationLimitDb = strength.attenuationLimitDb
-        suppressor.bypassed = bypassed
+        // Two-stage pipeline (denoise → Voice Enhancer DSP). Mode/strength/tone come from config.
+        let pipe = PipelineProcessor(suppressor: suppressor, sampleRate: 48_000, config: config)
+        pipe.prepare(config: config)
+        pipeline = pipe
 
         // Resampler: input (any rate, any channels) → 48 kHz mono for the model.
         converter = AVAudioConverter(from: format, to: canonical)
@@ -87,7 +90,8 @@ final class LiveAudioEngine: AudioEngineControlling {
         input.installTap(onBus: 0, bufferSize: 480, format: format) { [weak self] buffer, _ in
             guard let self, let canonicalSamples = self.toCanonicalMono(buffer), !canonicalSamples.isEmpty else { return }
             let inLevel = Self.rms(canonicalSamples)
-            let processed = self.suppressor.process(canonicalSamples)   // DeepFilter (0.97ms/hop)
+            // Two-stage pipeline: DeepFilter denoise (~0.97 ms/hop) → Voice Enhancer DSP.
+            let processed = self.pipeline?.process(canonicalSamples) ?? canonicalSamples
             if !processed.isEmpty {
                 processed.withUnsafeBufferPointer { self.output?.pushMono($0.baseAddress!, count: $0.count) }
             }
@@ -118,14 +122,15 @@ final class LiveAudioEngine: AudioEngineControlling {
         output?.stop()
         output = nil
         converter = nil
+        pipeline = nil
         running = false
         DispatchQueue.main.async { self.state?.meters.set(input: 0, output: 0) }
         setStatus(.stopped)
     }
 
-    func updateParameters(strength: NoiseStrength, bypassed: Bool) {
-        suppressor.attenuationLimitDb = strength.attenuationLimitDb
-        suppressor.bypassed = bypassed
+    /// Apply mode/strength/tone/bypass live — ramps inside the pipeline, no teardown (PRD 8.4).
+    func update(config: AudioProcessingConfig) {
+        pipeline?.update(config: config)
     }
 
     // MARK: - Helpers

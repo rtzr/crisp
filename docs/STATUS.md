@@ -17,6 +17,7 @@ PRD(`krisp_like_mac_prd_workplan.docx`)의 M0–M6 마일스톤을 **검증 가�
 | 4 | M4 / FILE-* | 파일 처리 | ✅ | **ffmpeg-free**(AVFoundation+libdf), mp3→m4a, mp4→wav |
 | 5 | M5 | 서명/notarization/패키징 | 🔶 | pkg 생성(앱+드라이버+2모델), **notarize는 Apple 계정 필요** |
 | 6 | M6 | 문서/라이선스/리포트 | ✅ | architecture/install/LICENSES/known-issues |
+| **VE** | **v0.2** | **Voice Enhancer 파이프라인** | ✅ | 2-stage 파이프라인 + DSP 인핸서, 4모드, 파일 HQ(LUFS/peak), `vetool` 검증 |
 
 ## 검증된 성공 기준 (PRD 1.4 / 8장 대비)
 
@@ -34,6 +35,18 @@ PRD(`krisp_like_mac_prd_workplan.docx`)의 M0–M6 마일스톤을 **검증 가�
 - ✅ end-to-end 실시간: model→VirtualMicOutput→HAL loopback→입력→recorder (RMS −24.4dB)
 - ✅ **30분 연속 안정성: crash 0 · dropout 0** (PASS)
 - ✅ 객관 음질 DNSMOS: OVRL +0.55, BAK +1.45
+
+## Voice Enhancer 파이프라인 (PRD v0.2) — 이번 추가
+
+PRD `krisp_like_mac_voice_enhancer_prd_v02.docx` 구현. 상세: [`docs/voice-enhancer.md`](voice-enhancer.md).
+
+- ✅ **4개 처리 모드** — Off / Noise Cancellation / Voice Enhancer / Clean + Enhance (`ProcessingMode`, UI/영속화)
+- ✅ **2-stage 파이프라인** — `PipelineProcessor`(DeepFilter denoise → `VoiceEnhancer` DSP), 교체 가능 stage(PRD §4.5)
+- ✅ **DSP 인핸서** — HPF·톤 EQ(3종)·컴프레서·디에서·−1dBFS 리미터, 추가 지연 ≈ 0ms
+- ✅ **클릭 없는 전환** — 항상 in-path + dry→wet 40ms 램프, `wetMix=0` bit-identical 패스스루(검증)
+- ✅ **스트리밍 결정성** — `vetool`: aligned == chunked bit-identical, 리미터 안전, RTF enhancer 0.012 / clean+enhance 0.11
+- ✅ **파일 HQ** — Fast/HQ, 미리듣기(20초), LUFS 정규화(-16/-18) + peak 천장(-1dBFS), before/after 리포트
+- ✅ **모델/가중치 추가 0** — 생성형 아님(화자 보존), 라이선스 BOM 변화 없음. LocalVQE/Resemble는 동일 seam에 드롭인 가능(PRD §9 M1 별도)
 
 ## 남은 항목 — 사람/계정/GUI 앱 필요 (자동화 불가)
 

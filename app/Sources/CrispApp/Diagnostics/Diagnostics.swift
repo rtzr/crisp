@@ -8,7 +8,14 @@ enum Diagnostics {
     static var buildNumber: String {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
     }
-    static let modelVersion = "DeepFilterNet3 (tract)"
+    static let modelVersion = "DeepFilterNet3 (tract) + DSP Voice Enhancer"
+
+    /// Rough added latency of the realtime pipeline, in ms (PRD 6.1 / SET-02). The Voice
+    /// Enhancer DSP is zero-latency (IIR, no lookahead); the figure is the DeepFilter stage's
+    /// algorithmic latency (~10 ms hop, ~20 ms initial buffer for the low-latency model).
+    static func estimatedLatencyMs(lowLatency: Bool) -> Double {
+        lowLatency ? 20 : 30
+    }
 
     /// Export status/error info only — never voice data (PRD privacy / SET-03).
     @MainActor
@@ -18,7 +25,10 @@ enum Diagnostics {
         lines.append("app: \(appVersion) (build \(buildNumber))")
         lines.append("model: \(modelVersion)")
         lines.append("os: \(ProcessInfo.processInfo.operatingSystemVersionString)")
-        lines.append("enabled: \(state.isEnabled)  bypassed: \(state.isBypassed)  strength: \(state.strength.rawValue)")
+        lines.append("enabled: \(state.isEnabled)  bypassed: \(state.isBypassed)")
+        lines.append("mode: \(state.mode.rawValue)")
+        lines.append("noiseStrength: \(state.strength.rawValue)  enhanceStrength: \(state.enhanceStrength.rawValue)  tone: \(state.tonePreset.rawValue)")
+        lines.append("lowLatencyModel: \(state.lowLatencyMode)  est.addedLatencyMs: \(estimatedLatencyMs(lowLatency: state.lowLatencyMode))")
         lines.append("selectedInputUID: \(state.selectedInputUID ?? "default")")
         lines.append("virtualMicInstalled: \(state.virtualMicInstalled)")
         switch state.status {

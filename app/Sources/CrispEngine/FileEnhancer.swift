@@ -8,6 +8,56 @@ public enum OutputFormat: String, CaseIterable, Identifiable, Sendable {
     public var ext: String { rawValue }
 }
 
+/// File processing quality (PRD FR-FILE-002). Fast = denoise/DSP only; HQ adds loudness
+/// normalization + peak limiting (and is where a heavier offline model would slot in).
+public enum FileQuality: String, CaseIterable, Identifiable, Sendable {
+    case fast, hq
+    public var id: String { rawValue }
+}
+
+/// Everything the file HQ pipeline needs (PRD 4.3 / 5.2).
+public struct FileEnhanceOptions: Sendable {
+    public var mode: ProcessingMode
+    public var quality: FileQuality
+    public var enhanceStrength: EnhanceStrength
+    public var tonePreset: TonePreset
+    public var noiseAttenuationDb: Float
+    public var loudness: LoudnessTarget
+    public var format: OutputFormat
+    public var lowLatencyModel: Bool
+    /// Process only the first N seconds (PRD FR-FILE-003 preview). nil = whole file.
+    public var previewSeconds: Double?
+
+    public init(mode: ProcessingMode = .cleanAndEnhance,
+                quality: FileQuality = .hq,
+                enhanceStrength: EnhanceStrength = .medium,
+                tonePreset: TonePreset = .natural,
+                noiseAttenuationDb: Float = 100,
+                loudness: LoudnessTarget = .podcast,
+                format: OutputFormat = .wav,
+                lowLatencyModel: Bool = false,
+                previewSeconds: Double? = nil) {
+        self.mode = mode
+        self.quality = quality
+        self.enhanceStrength = enhanceStrength
+        self.tonePreset = tonePreset
+        self.noiseAttenuationDb = noiseAttenuationDb
+        self.loudness = loudness
+        self.format = format
+        self.lowLatencyModel = lowLatencyModel
+        self.previewSeconds = previewSeconds
+    }
+}
+
+/// Result of a file enhance run — surfaced to the UI for the before/after report (PRD FR-FILE-006).
+public struct FileEnhanceReport: Sendable {
+    public let output: URL
+    public let inputPeakDb: Double
+    public let outputPeakDb: Double
+    public let outputLUFS: Double
+    public let loudnessGainDb: Double
+}
+
 public enum FileEnhanceError: LocalizedError {
     case noAudioTrack, modelLoadFailed, readFailed(String), writeFailed(String), cancelled
     public var errorDescription: String? {
@@ -66,6 +116,115 @@ public final class FileEnhancer {
             outputs.append(url)
         }
         return outputs
+    }
+
+    // MARK: - Voice Enhancer pipeline (PRD 4.3 / 5.2)
+
+    /// Full file pipeline: decode → (denoise) → (Voice Enhancer DSP) → (HQ loudness/peak) → write.
+    /// Honors `options.previewSeconds` to render a short before/after sample (FR-FILE-003).
+    @discardableResult
+    public func enhance(input: URL,
+                        output: URL,
+                        options: FileEnhanceOptions,
+                        progress: ((Double) -> Void)? = nil) throws -> FileEnhanceReport {
+        cancelled = false
+        var samples = try decodeTo48kMono(input)
+        if let secs = options.previewSeconds {
+            let limit = Int(secs * 48_000)
+            if samples.count > limit { samples = Array(samples[0..<limit]) }
+        }
+        let inputPeakDb = 20 * log10(Double(peak(samples)) + 1e-9)
+
+        // Build the two-stage pipeline. DeepFilter is the Noise Cancellation stage; if it
+        // fails to load we fall back to passthrough so enhance-only / format-convert still work.
+        let model: DeepFilterSuppressor.Model = options.lowLatencyModel ? .lowLatency : .full
+        let suppressor: NoiseSuppressor
+        if let path = DeepFilterSuppressor.modelPath(model),
+           let df = DeepFilterSuppressor(modelPath: path) {
+            suppressor = df
+        } else if options.mode.denoisePolicy != .none {
+            throw FileEnhanceError.modelLoadFailed
+        } else {
+            suppressor = PassthroughSuppressor()
+        }
+        let config = AudioProcessingConfig(mode: options.mode, sampleRate: 48_000,
+                                           noiseAttenuationDb: options.noiseAttenuationDb,
+                                           enhanceStrength: options.enhanceStrength,
+                                           tonePreset: options.tonePreset,
+                                           modelId: model.rawValue)
+        let pipeline = PipelineProcessor(suppressor: suppressor)
+        pipeline.prepare(config: config)
+        pipeline.snapEnhancerToTarget()   // offline: fully wet from sample 0
+
+        // Stream through the pipeline in ~1s blocks, then flush the model tail.
+        var processed: [Float] = []
+        processed.reserveCapacity(samples.count)
+        let block = 48_000
+        var i = 0
+        while i < samples.count {
+            if cancelled { throw FileEnhanceError.cancelled }
+            let n = min(block, samples.count - i)
+            processed.append(contentsOf: pipeline.process(Array(samples[i..<(i + n)])))
+            i += n
+            progress?(Double(i) / Double(max(samples.count, 1)) * 0.9)
+        }
+        processed.append(contentsOf: pipeline.flush())
+
+        // HQ post: loudness normalize to target + peak ceiling (PRD 4.3 steps 6–7).
+        var outLUFS = Double.nan, gainDb = 0.0
+        if options.quality == .hq, let target = options.loudness.lufs {
+            let r = Loudness.normalize(&processed, toLUFS: target, sampleRate: 48_000, ceilingDb: -1.0)
+            gainDb = r.gainDb
+            outLUFS = Loudness.integratedLUFS(processed, sampleRate: 48_000)
+        } else {
+            outLUFS = Loudness.integratedLUFS(processed, sampleRate: 48_000)
+        }
+        progress?(0.95)
+
+        try write(processed, to: output, format: options.format)
+        progress?(1.0)
+        return FileEnhanceReport(output: output,
+                                 inputPeakDb: inputPeakDb,
+                                 outputPeakDb: 20 * log10(Double(peak(processed)) + 1e-9),
+                                 outputLUFS: outLUFS,
+                                 loudnessGainDb: gainDb)
+    }
+
+    private func peak(_ s: [Float]) -> Float {
+        var p: Float = 0
+        for v in s { p = max(p, abs(v)) }
+        return p
+    }
+
+    private func write(_ samples: [Float], to output: URL, format: OutputFormat) throws {
+        let outSettings = Self.outputSettings(format)
+        let procFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false)!
+        let outFile: AVAudioFile
+        do { outFile = try AVAudioFile(forWriting: output, settings: outSettings, commonFormat: .pcmFormatFloat32, interleaved: false) }
+        catch { throw FileEnhanceError.writeFailed(error.localizedDescription) }
+        // Write in chunks so a huge buffer isn't required.
+        let chunk = 48_000
+        var i = 0
+        while i < samples.count {
+            let n = min(chunk, samples.count - i)
+            guard let buf = AVAudioPCMBuffer(pcmFormat: procFormat, frameCapacity: AVAudioFrameCount(n)) else { break }
+            buf.frameLength = AVAudioFrameCount(n)
+            samples.withUnsafeBufferPointer { memcpy(buf.floatChannelData![0], $0.baseAddress! + i, n * MemoryLayout<Float>.size) }
+            do { try outFile.write(from: buf) } catch { throw FileEnhanceError.writeFailed(error.localizedDescription) }
+            i += n
+        }
+    }
+
+    private static func outputSettings(_ format: OutputFormat) -> [String: Any] {
+        switch format {
+        case .wav:
+            return [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48_000,
+                    AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
+                    AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
+        case .m4a:
+            return [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000,
+                    AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 192_000]
+        }
     }
 
     // MARK: - Decode (once)

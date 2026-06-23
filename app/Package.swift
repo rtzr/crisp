@@ -55,6 +55,13 @@ let package = Package(
             dependencies: ["CrispEngine", "CDeepFilter"],
             path: "Sources/mictool",
             linkerSettings: [dfLinker]
+        ),
+        // Verifies the Voice Enhancer DSP stage + pipeline (streaming determinism, RTF).
+        .executableTarget(
+            name: "vetool",
+            dependencies: ["CrispEngine", "CDeepFilter"],
+            path: "Sources/vetool",
+            linkerSettings: [dfLinker]
         )
     ]
 )

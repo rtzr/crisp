@@ -70,6 +70,34 @@ no-reference DNSMOS (1–5, 높을수록 좋음), noisy_snr0 샘플, 16kHz:
 | **30분 연속 안정성** (model+AUHAL+driver) | 1800s, 10/10 spot-check non-silent, **crash 0 · dropout 0** | ✅ |
 | 설치 패키지 (앱→/Applications, 드라이버→/Library) | relocation 버그 수정 후 검증 | ✅ |
 
+## Voice Enhancer 파이프라인 (PRD v0.2) — `vetool` / `filetool enhance`
+
+DSP 인핸서 + 2-stage 파이프라인. 구현/설계: [`voice-enhancer.md`](voice-enhancer.md).
+
+| 검증 항목 | 기대 | 측정 | 판정 |
+|---|---|---|---|
+| 비활성 인핸서 = 패스스루 | bit-identical | `wetMix=0` 출력 == 입력 | ✅ |
+| 스트리밍 결정성 | aligned == chunked | 임의 버퍼(137/480/53/911/256/1000) bit-identical | ✅ |
+| 리미터/클램프 안전 | peak ≤ full scale | 입력 1.5 트랜지언트 → 출력 peak **0.75** | ✅ |
+| 인핸스 효과 | 신호 변화 | Δenergy 측정됨 | ✅ |
+| RTF (enhancer 단독) | ≪ 1 | **0.012** (≈84×) | ✅ |
+| RTF (clean+enhance) | < 1 | **0.11** (≈8.9×) | ✅ |
+| 추가 지연 | §6.1 ≤ 50ms | DSP **0 ms**(IIR, no lookahead) + denoise hop | ✅ |
+
+파일 HQ 파이프라인 (`filetool enhance`, noisy_snr0.wav 10.6s):
+
+| 모드/품질 | 출력 LUFS | peak in→out | gain | 비고 |
+|---|---|---|---|---|
+| clean+enhance / HQ podcast | −19.3 | −3.5 → −1.0 dBFS | +6.9 dB | peak 천장에 의해 −16 미달(클립 방지) |
+| voice·warm / HQ meeting | −19.0 | −3.5 → −1.0 dBFS | +7.3 dB | |
+| noise / Fast | −23.7 | −3.5 → −3.9 dBFS | +0.0 dB | Fast=정규화 미적용 |
+| off / HQ podcast | −21.0 | −3.5 → −1.0 dBFS | +2.5 dB | 변환+정규화만 |
+
+출력 48k mono Int16 WAV / AAC m4a, 길이 정확 보존(10.595646s in=out). `wav/mp3/m4a/mp4/mov` 입력.
+
+> **한계**: true-peak(-1 dBTP)는 오버샘플링 없이 sample-peak 천장으로 근사. LUFS는 BS.1770
+> 근사(K-weighting + 절대/상대 게이팅). LocalVQE/Resemble 실모델은 동일 seam 드롭인(PRD §9 M1 별도).
+
 ## 미검증 (사람/계정 필요 — 자동화 불가)
 
 - A/B blind 청취 ≥80% 개선 (PRD 8.3/8.4) — **사람 청취 필요**. 객관 proxy(DNSMOS)는 별도 측정 가능.

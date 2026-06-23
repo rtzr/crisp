@@ -10,6 +10,8 @@ public protocol NoiseSuppressor: AnyObject {
     var bypassed: Bool { get set }
     /// Returns processed samples for complete hops; may be empty while carrying.
     func process(_ input: [Float]) -> [Float]
+    /// Drain any carried sub-hop remainder (offline/file use). Streaming callers skip this.
+    func flush() -> [Float]
     func reset()
 }
 
@@ -19,5 +21,6 @@ public final class PassthroughSuppressor: NoiseSuppressor {
     public var bypassed: Bool = false
     public init() {}
     public func process(_ input: [Float]) -> [Float] { input }
+    public func flush() -> [Float] { [] }
     public func reset() {}
 }

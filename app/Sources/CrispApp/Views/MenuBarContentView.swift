@@ -1,8 +1,11 @@
 import SwiftUI
+import CrispEngine
 
 struct MenuBarContentView: View {
     @EnvironmentObject var state: AppState
     @Environment(\.openWindow) private var openWindow
+
+    private var isActive: Bool { state.isEnabled && !state.isBypassed && state.mode != .off }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -10,15 +13,25 @@ struct MenuBarContentView: View {
                 Text("Crisp")
                     .font(.headline)
                 Spacer()
-                Text(state.isEnabled && !state.isBypassed ? "노이즈 캔슬링 켜짐" : "꺼짐")
+                Text(isActive ? "\(state.mode.label) 켜짐" : "꺼짐")
                     .font(.caption)
-                    .foregroundStyle(state.isEnabled && !state.isBypassed ? .green : .secondary)
+                    .foregroundStyle(isActive ? .green : .secondary)
             }
 
-            Toggle("노이즈 캔슬링", isOn: $state.isEnabled)
+            Toggle("실시간 처리", isOn: $state.isEnabled)
                 .toggleStyle(.switch)
 
             Divider()
+
+            // Processing mode (PRD FR-RT-002).
+            VStack(alignment: .leading, spacing: 4) {
+                Text("처리 모드").font(.caption).foregroundStyle(.secondary)
+                Picker("처리 모드", selection: $state.mode) {
+                    ForEach(ProcessingMode.allCases) { m in Text(m.shortLabel).tag(m) }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+            }
 
             // Input mic picker (PRD RT-01).
             VStack(alignment: .leading, spacing: 4) {
@@ -33,21 +46,43 @@ struct MenuBarContentView: View {
                 .pickerStyle(.menu)
             }
 
-            // Strength (PRD RT-04).
-            VStack(alignment: .leading, spacing: 4) {
-                Text("강도").font(.caption).foregroundStyle(.secondary)
-                Picker("강도", selection: $state.strength) {
-                    ForEach(NoiseStrength.allCases) { s in Text(s.label).tag(s) }
+            // Noise strength — only when the Noise Cancellation stage is active (PRD RT-04).
+            if state.mode == .noiseCancellation || state.mode == .cleanAndEnhance {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("노이즈 강도").font(.caption).foregroundStyle(.secondary)
+                    Picker("노이즈 강도", selection: $state.strength) {
+                        ForEach(NoiseStrength.allCases) { s in Text(s.label).tag(s) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
+            }
+
+            // Enhance strength + tone — only when the Voice Enhancer stage is active (PRD FR-RT-003 / 3.2).
+            if state.mode.usesEnhancer {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("인핸스 강도").font(.caption).foregroundStyle(.secondary)
+                    Picker("인핸스 강도", selection: $state.enhanceStrength) {
+                        ForEach(EnhanceStrength.allCases) { s in Text(s.label).tag(s) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("톤").font(.caption).foregroundStyle(.secondary)
+                    Picker("톤", selection: $state.tonePreset) {
+                        ForEach(TonePreset.allCases) { t in Text(t.label).tag(t) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                }
             }
 
             // Level meters (PRD APP/RT status display). Isolated in their own observer so
             // high-frequency level updates don't re-render the rest of this popover.
             MetersView(meters: state.meters)
 
-            Toggle("바이패스 (원본 전달)", isOn: $state.isBypassed)
+            Toggle("바이패스 (원본 전달 · A/B 비교)", isOn: $state.isBypassed)
                 .toggleStyle(.checkbox)
                 .font(.caption)
 
