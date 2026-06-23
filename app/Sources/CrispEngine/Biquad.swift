@@ -39,6 +39,14 @@ public struct Biquad {
             1 + alpha, -2 * cw, 1 - alpha)
     }
 
+    public mutating func setLowpass(freq: Float, q: Float, sampleRate: Float) {
+        let w0 = 2 * Float.pi * freq / sampleRate
+        let cw = cos(w0), sw = sin(w0)
+        let alpha = sw / (2 * q)
+        set((1 - cw) / 2, 1 - cw, (1 - cw) / 2,
+            1 + alpha, -2 * cw, 1 - alpha)
+    }
+
     public mutating func setPeaking(freq: Float, q: Float, gainDb: Float, sampleRate: Float) {
         let A = pow(10, gainDb / 40)
         let w0 = 2 * Float.pi * freq / sampleRate

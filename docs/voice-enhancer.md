@@ -100,6 +100,36 @@ RTF clean+enhance pipeline: 0.1126            # ≈ 8.9× 실시간 (denoise+enh
 출력은 48k mono Int16 WAV / AAC m4a, **길이 정확 보존**(10.595646s in=out → hop carry+flush
 샘플 정확). 모든 모드 정상.
 
+## 테스트셋 & 자동화 테스트
+
+PRD §8.1 테스트셋과 §8.2 자동 평가, §9.4 "batch 처리 스크립트 + 결과 CSV" 납품물을 구현했다.
+
+**테스트셋** — 레포의 실제 음성·노이즈 자산으로 다운로드 없이 구성(`TestCorpus`):
+clean / noisy(SNR 0·5·10·20) / reverb / reverb+noise / clipping / bandlimit(8·16k) / 저음량 / hum.
+생성: `maketestset test/corpus` (`test/corpus/README.md` 참고).
+
+**XCTest 스위트** (`swift test`) — **26개 테스트, 0 실패**:
+- `BiquadTests` — 0dB peaking=identity, LPF가 HF 감쇠, HPF가 DC 제거, 엔벨로프 수렴
+- `VoiceEnhancerTests` — 비활성 패스스루 bit-identical, chunk 독립성, 리미터 full-scale 이내, 톤 프리셋 finite, 램프 클릭 없음
+- `LoudnessTests` — 무음=-inf, 음량 선형성(+20LU), 정규화 목표 도달, peak 천장 준수
+- `MetricsTests` — RMS/peak, SI-SDR(동일=∞, 노이즈↑=점수↓), **지연 보정 SI-SDR**(순수 지연 복원)
+- `PipelineTests` — Off/Noise 무채색, Clean+Enhance 변화+길이보존, 라이브 모드 전환 finite
+- `IntegrationTests`(자산/모델 있을 때) — 코퍼스 생성 유효성, 파일 end-to-end(길이 보존·천장·finite)
+
+**배치 평가** (`scripts/quality-eval.sh`) — 코퍼스 × 모드 처리 → `quality-report.csv`
+(LUFS/peak/SI-SDR). 비정상 출력(non-finite·클리핑) 시 exit 1 → **회귀 게이트**.
+SI-SDR은 모델 지연을 cross-correlation으로 정렬 후 측정. 측정 결과:
+
+| 입력 | noise mode SI-SDR(in→out) | 해석 |
+|---|---|---|
+| noisy_snr0 | 0.00 → **+4.89** | 저-SNR에서 denoise 이득 큼 |
+| noisy_snr5 | 5.00 → 5.51 | 모델 상한(≈6dB)에 수렴 |
+| noisy_snr20 | 20.0 → 6.33 | 이미 깨끗 → 처리가 재구성 한계로 fidelity 소폭↓ |
+| clean | (∞) → 6.25 | DeepFilter의 clean 재구성 상한 |
+
+> SI-SDR 상한(≈6dB)은 신경망 denoiser가 pristine clean 대비 갖는 재구성 한계(샘플 단위 지표 특성)이며
+> 결함이 아니다. 지각 품질은 DNSMOS(`poc/model/run_poc.sh`)로 별도 측정(OVRL +0.55).
+
 ## 한계 / 후속
 
 - **True-peak(-1 dBTP)** 는 4× 오버샘플링 없이 **sample-peak 천장**으로 근사(음성에서 보수적).

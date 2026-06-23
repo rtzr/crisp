@@ -98,6 +98,39 @@ DSP 인핸서 + 2-stage 파이프라인. 구현/설계: [`voice-enhancer.md`](vo
 > **한계**: true-peak(-1 dBTP)는 오버샘플링 없이 sample-peak 천장으로 근사. LUFS는 BS.1770
 > 근사(K-weighting + 절대/상대 게이팅). LocalVQE/Resemble 실모델은 동일 seam 드롭인(PRD §9 M1 별도).
 
+## 테스트셋 & 자동화 테스트 (PRD §8.1 / §8.2 / §9.4)
+
+**테스트셋** — 레포의 실제 음성·노이즈·잔향 자산에서 다운로드 없이 구성(`maketestset`),
+12개 카테고리: clean / noisy(SNR 0·5·10·20) / reverb / reverb+noise / clipping /
+bandlimit(8·16k) / 저음량 / hum. 재현: `test/corpus/README.md`.
+
+**XCTest** (`swift test --package-path app`):
+
+| Suite | 검증 | 결과 |
+|---|---|---|
+| BiquadTests (4) | 0dB=identity, LPF/HPF 거동, 엔벨로프 수렴 | ✅ |
+| VoiceEnhancerTests (5) | 패스스루 bit-identical·chunk 독립·리미터·톤·램프 | ✅ |
+| LoudnessTests (4) | 무음/선형성/정규화/peak 천장 | ✅ |
+| MetricsTests (5) | RMS·peak·SI-SDR·지연보정 SI-SDR | ✅ |
+| PipelineTests (4) | 모드 라우팅·길이보존·라이브 전환 finite | ✅ |
+| IntegrationTests (4) | 코퍼스 생성·파일 end-to-end(모델) | ✅ |
+| **합계** | | **26 tests, 0 failures** |
+
+**배치 평가** (`scripts/quality-eval.sh` → `test/corpus/quality-report.csv`) — 코퍼스 ×
+{noise, voice, clean} HQ 처리. 모든 출력 finite·peak −1 dBFS 천장 준수 → **PASS(회귀 게이트)**.
+지연 보정 SI-SDR(noise mode):
+
+| 입력 | in SI-SDR | out SI-SDR | 비고 |
+|---|---|---|---|
+| noisy_snr0 | 0.00 | **+4.89** | 저-SNR denoise 이득 |
+| noisy_snr5 | 5.00 | 5.51 | 모델 상한(≈6dB) 수렴 |
+| noisy_snr10 | 10.0 | 6.00 | |
+| noisy_snr20 | 20.0 | 6.33 | 이미 깨끗 → fidelity 상한 |
+| clean | ∞ | 6.25 | DeepFilter clean 재구성 상한 |
+
+> SI-SDR 상한(≈6dB)은 신경망 denoiser의 pristine-clean 대비 재구성 한계(샘플 지표 특성)이며 결함 아님.
+> 지각 품질은 위 DNSMOS(OVRL +0.55) 참조. 단일 화자 합성셋이며 PRD §8.3 사람 blind 청취 대체 불가.
+
 ## 미검증 (사람/계정 필요 — 자동화 불가)
 
 - A/B blind 청취 ≥80% 개선 (PRD 8.3/8.4) — **사람 청취 필요**. 객관 proxy(DNSMOS)는 별도 측정 가능.

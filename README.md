@@ -70,14 +70,16 @@ open build/Crisp-0.1.0.pkg
 ## 검증 / 테스트
 
 ```sh
+swift test --package-path app      # 단위·통합 테스트 (26개: DSP·파이프라인·LUFS·메트릭·파일 end-to-end)
+./scripts/quality-eval.sh          # 테스트셋 생성+배치 처리 → quality-report.csv (회귀 게이트)
 ./poc/model/run_poc.sh             # 모델 RTF·노이즈 감소
 ./scripts/e2e-test.sh              # end-to-end: model→가상마이크→녹음 (드라이버 설치 필요)
 ./scripts/stability-test.sh 1800   # 30분 안정성 (crash/dropout)
 BIN="$(cd app && swift build --show-bin-path)"
-"$BIN/dftool"   engine/models/DeepFilterNet3_onnx.tar.gz 100 build/in.f32 out.f32 chunked  # 노이즈 stage 스트리밍 정확성
-"$BIN/vetool"   engine/models/DeepFilterNet3_onnx.tar.gz                                   # 인핸서/파이프라인(결정성·리미터·RTF)
-"$BIN/filetool" input.mp3 out.m4a m4a                                                      # 파일 denoise
-"$BIN/filetool" enhance input.mp3 out.wav clean hq natural podcast                         # 파일 Voice Enhancer 파이프라인
+"$BIN/dftool"      engine/models/DeepFilterNet3_onnx.tar.gz 100 build/in.f32 out.f32 chunked  # 노이즈 stage 스트리밍 정확성
+"$BIN/vetool"      engine/models/DeepFilterNet3_onnx.tar.gz                                   # 인핸서/파이프라인(결정성·리미터·RTF)
+"$BIN/maketestset" test/corpus                                                               # PRD 8.1 테스트셋 생성(실제 자산 기반)
+"$BIN/filetool"    enhance input.mp3 out.wav clean hq natural podcast                         # 파일 Voice Enhancer 파이프라인
 ```
 
 ## 프로젝트 구조
@@ -89,13 +91,15 @@ app/Package.swift          SwiftPM: CDeepFilter / CrispEngine / CrispApp / dftoo
   Sources/CrispEngine/     순수 DSP/모델(AVFoundation): DeepFilterSuppressor, FileEnhancer,
                            VirtualMicOutput(AUHAL), CoreAudioDevices  ← 앱·CLI 공유
                            Voice Enhancer: AudioProcessing(모드/config/protocol), PipelineProcessor,
-                           VoiceEnhancer, Biquad, Loudness
+                           VoiceEnhancer, Biquad, Loudness · 평가: Metrics, AudioIO, TestCorpus
   Sources/CrispApp/        SwiftUI 메뉴바 앱 (AppState, AudioEngineController, Views)
-  Sources/{dftool,vetool,filetool,mictool}/  검증 CLI (vetool = 인핸서/파이프라인)
+  Sources/{dftool,vetool,filetool,mictool,maketestset,evaltool}/  검증·평가 CLI
+  Tests/CrispEngineTests/  XCTest (swift test): DSP·파이프라인·LUFS·메트릭·파일 end-to-end
 engine/CDeepFilter/lib/    libdf.dylib       (fetch-deps 생성, gitignore)
 engine/models/             DeepFilterNet3 모델 (fetch-deps 생성, gitignore)
-scripts/                   fetch-deps / install / verify / package / e2e / stability
-docs/                      architecture · STATUS · test-report · install · acceptance-checklist · known-issues
+test/corpus/               평가 테스트셋 (maketestset 생성, gitignore) + README
+scripts/                   fetch-deps / install / verify / package / e2e / stability / quality-eval
+docs/                      architecture · voice-enhancer · STATUS · test-report · install · acceptance-checklist
 poc/model/                 DeepFilterNet 클론(gitignore) + run_poc.sh
 ```
 

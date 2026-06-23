@@ -62,6 +62,27 @@ let package = Package(
             dependencies: ["CrispEngine", "CDeepFilter"],
             path: "Sources/vetool",
             linkerSettings: [dfLinker]
+        ),
+        // Generates the evaluation corpus (PRD 8.1) from in-repo speech + noise.
+        .executableTarget(
+            name: "maketestset",
+            dependencies: ["CrispEngine"],
+            path: "Sources/maketestset",
+            linkerSettings: [dfLinker]
+        ),
+        // Objective metrics for a processed file (PRD 8.2): LUFS, peak, RMS, SI-SDR.
+        .executableTarget(
+            name: "evaltool",
+            dependencies: ["CrispEngine"],
+            path: "Sources/evaltool",
+            linkerSettings: [dfLinker]
+        ),
+        // Automated unit + integration tests (`swift test`).
+        .testTarget(
+            name: "CrispEngineTests",
+            dependencies: ["CrispEngine", "CDeepFilter"],
+            path: "Tests/CrispEngineTests",
+            linkerSettings: [dfLinker]
         )
     ]
 )
