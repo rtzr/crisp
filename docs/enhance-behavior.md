@@ -62,9 +62,12 @@
 ## 5. 한계를 넘으려면 (후속)
 
 BWE/디클리핑/강한 dereverb는 **신경망 모델**의 영역이다. 파이프라인의 Voice Enhancer는
-교체 가능한 `AudioProcessor` stage이므로, PRD 후보(**Resemble Enhance / ClearerVoice /
-LavaSR**)를 **같은 seam에 드롭인**하면 위 한계를 보완할 수 있다(가중치 다운로드·벤치마크·
-라이선스 확인은 PRD §9 M1 별도). 현재 DSP 인핸서는 그 전까지의 **무의존·저지연·화자보존**
+교체 가능한 `AudioProcessor` stage이므로, 후보 모델을 **같은 seam에 드롭인**하면 위 한계를
+보완할 수 있다. 어떤 모델을 실시간 vs 파일에 쓸지, 라이선스·온디바이스 실현성·통합 경로를
+조사한 결과는 → **[`enhance-limitations-research.md`](enhance-limitations-research.md)**.
+요약: 지금 자체로 해결 가능한 건 **true-peak 리미터**뿐이고, 파일 HQ는 **Resemble Enhance/
+ClearerVoice**(라이선스 검증 후), 실시간 BWE는 **AP-BWE**(MIT, CPU 고속) PoC, 실시간 생성형
+복원은 **Stream.FM** 성숙까지 보류. 현재 DSP 인핸서는 그 전까지의 **무의존·저지연·화자보존**
 기본값으로 동작한다.
 
 ## 재현
