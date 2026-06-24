@@ -74,6 +74,22 @@ public enum Metrics {
         return siSDR(reference: reference, estimate: shifted)
     }
 
+    /// Low-band vs high-band RMS (dB), for characterizing tone/EQ. Low = below ~500 Hz,
+    /// high = above ~4 kHz (each a 4th-order filter). `tilt = highDb - lowDb` rises for a
+    /// brighter signal, falls for a warmer one.
+    public static func spectralTilt(_ x: [Float], sampleRate sr: Double) -> (lowDb: Double, highDb: Double) {
+        let s = Float(sr)
+        var lp1 = Biquad(), lp2 = Biquad(), hp1 = Biquad(), hp2 = Biquad()
+        lp1.setLowpass(freq: 500, q: 0.541, sampleRate: s); lp2.setLowpass(freq: 500, q: 1.307, sampleRate: s)
+        hp1.setHighpass(freq: 4000, q: 0.541, sampleRate: s); hp2.setHighpass(freq: 4000, q: 1.307, sampleRate: s)
+        var low = [Float](repeating: 0, count: x.count), high = [Float](repeating: 0, count: x.count)
+        for i in 0..<x.count {
+            low[i] = lp2.process(lp1.process(x[i]))
+            high[i] = hp2.process(hp1.process(x[i]))
+        }
+        return (rmsDb(low), rmsDb(high))
+    }
+
     /// True if any sample is NaN or infinite — a hard failure for an audio processor.
     public static func hasNonFinite(_ x: [Float]) -> Bool {
         for v in x where !v.isFinite { return true }

@@ -2,7 +2,8 @@
 
 `krisp_like_mac_voice_enhancer_prd_v02.docx` 의 Voice Enhancer 추가 요구사항을 기존
 DeepFilterNet 노이즈 캔슬링 MVP 위에 구현한 내용. 본 문서는 PRD 각 절 ↔ 구현 매핑과
-모델 선택 판단, 검증 결과를 기록한다.
+모델 선택 판단, 검증 결과를 기록한다. 실제 들리는 효과·한계 요약은
+[`enhance-behavior.md`](enhance-behavior.md).
 
 ## 핵심 설계 결정 — 모델 vs DSP
 

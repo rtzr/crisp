@@ -40,14 +40,14 @@ tail -n +2 "$CORPUS/manifest.csv" | while IFS=, read -r file category snr refere
     [[ -f "$IN" ]] || continue
     # Baseline metrics of the unprocessed input vs the clean reference.
     in_csv="$("$BIN/evaltool" "$IN" "$REF" 2>/dev/null)"
-    in_lufs="$(echo "$in_csv" | cut -d, -f1)"; in_peak="$(echo "$in_csv" | cut -d, -f2)"; in_sisdr="$(echo "$in_csv" | cut -d, -f4)"
+    in_lufs="$(echo "$in_csv" | cut -d, -f1)"; in_peak="$(echo "$in_csv" | cut -d, -f2)"; in_sisdr="$(echo "$in_csv" | cut -d, -f7)"
     for mode in "${MODES[@]}"; do
         base="${file%.wav}"
         OUT="$OUTDIR/${base}__${mode}.wav"
         "$BIN/filetool" enhance "$IN" "$OUT" "$mode" "$QUALITY" natural podcast >/dev/null 2>&1
         out_csv="$("$BIN/evaltool" "$OUT" "$REF" 2>/dev/null)"
         out_lufs="$(echo "$out_csv" | cut -d, -f1)"; out_peak="$(echo "$out_csv" | cut -d, -f2)"
-        out_sisdr="$(echo "$out_csv" | cut -d, -f4)"; finite="$(echo "$out_csv" | cut -d, -f5)"
+        out_sisdr="$(echo "$out_csv" | cut -d, -f7)"; finite="$(echo "$out_csv" | cut -d, -f8)"
         gain=""
         if [[ -n "$in_sisdr" && -n "$out_sisdr" ]]; then gain="$(awk "BEGIN{printf \"%.2f\", $out_sisdr-($in_sisdr)}")"; fi
         echo "$file,$category,$snr,$mode,$in_lufs,$out_lufs,$in_peak,$out_peak,$in_sisdr,$out_sisdr,$gain,$finite" >> "$REPORT"
