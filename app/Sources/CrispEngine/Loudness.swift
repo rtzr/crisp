@@ -56,8 +56,9 @@ public enum Loudness {
         return gatedMeanLUFS(blockLoudness, kept)
     }
 
-    /// Normalize to `targetLUFS`, then bring sample peaks down to `ceilingDb` if needed.
-    /// Returns the applied gain (dB) and the measured input loudness.
+    /// Normalize to `targetLUFS`, then cap the gain so the **true peak** (ITU-R BS.1770,
+    /// inter-sample) stays at or below `ceilingDb` (−1 dBTP). Returns the applied gain (dB)
+    /// and the measured input loudness.
     @discardableResult
     public static func normalize(_ samples: inout [Float],
                                  toLUFS targetLUFS: Double,
@@ -67,13 +68,11 @@ public enum Loudness {
         guard measured.isFinite else { return (0, measured) }
         var gainDb = targetLUFS - measured
 
-        // Don't let the loudness gain push peaks over the ceiling.
+        // Don't let the loudness gain push the true peak over the ceiling.
         let ceilingLin = Float(pow(10, ceilingDb / 20))
-        var peak: Float = 0
-        for s in samples { peak = max(peak, abs(s)) }
-        if peak > 0 {
-            let maxGainLin = ceilingLin / peak
-            let maxGainDb = 20 * log10(Double(maxGainLin))
+        let tp = TruePeak.truePeak(samples)
+        if tp > 0 {
+            let maxGainDb = 20 * log10(Double(ceilingLin / tp))
             gainDb = min(gainDb, maxGainDb)
         }
         let gainLin = Float(pow(10, gainDb / 20))

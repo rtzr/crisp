@@ -28,12 +28,13 @@ do {
     let nonFinite = Metrics.hasNonFinite(x)
     let tilt = Metrics.spectralTilt(x, sampleRate: AudioIO.sampleRate)
     let crest = peak - rms
+    let truePeak = TruePeak.truePeakDb(x)
     // Human line on stderr, machine line on stdout.
-    FileHandle.standardError.write(String(format: "LUFS %.1f  peak %.1f  rms %.1f  crest %.1f  low %.1f  high %.1f  SI-SDR %@  finite=%@\n",
-        lufs, peak, rms, crest, tilt.lowDb, tilt.highDb, siSdr.isNaN ? "n/a" : String(format: "%.1f", siSdr), nonFinite ? "NO" : "yes").data(using: .utf8)!)
-    // CSV: lufs,peak,rms,crest,low_db,high_db,si_sdr,nonfinite
-    print(String(format: "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%@,%@",
-        lufs, peak, rms, crest, tilt.lowDb, tilt.highDb, siSdr.isNaN ? "" : String(format: "%.2f", siSdr), nonFinite ? "1" : "0"))
+    FileHandle.standardError.write(String(format: "LUFS %.1f  peak %.1f  truePeak %.1f dBTP  rms %.1f  crest %.1f  low %.1f  high %.1f  SI-SDR %@  finite=%@\n",
+        lufs, peak, truePeak, rms, crest, tilt.lowDb, tilt.highDb, siSdr.isNaN ? "n/a" : String(format: "%.1f", siSdr), nonFinite ? "NO" : "yes").data(using: .utf8)!)
+    // CSV: lufs,peak,rms,crest,low_db,high_db,si_sdr,nonfinite,true_peak_db (true_peak appended last to keep prior indices stable)
+    print(String(format: "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%@,%@,%.2f",
+        lufs, peak, rms, crest, tilt.lowDb, tilt.highDb, siSdr.isNaN ? "" : String(format: "%.2f", siSdr), nonFinite ? "1" : "0", truePeak))
 } catch {
     die("eval failed: \(error.localizedDescription)")
 }

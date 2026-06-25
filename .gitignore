@@ -28,10 +28,12 @@ models/*.tar.gz
 *.f32
 !test/fixtures/*.wav
 
-# Generated evaluation corpus + report (reproduce: maketestset / scripts/quality-eval.sh)
+# Generated evaluation corpus + reports (reproduce: maketestset / quality-eval.sh / hq-model-poc.sh)
 /test/corpus/manifest.csv
 /test/corpus/out/
 /test/corpus/quality-report.csv
+/test/corpus/hq-poc/
+/test/corpus/hq-poc-report.csv
 
 # Internal PRD spec — not published
 *.docx

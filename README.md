@@ -99,7 +99,7 @@ engine/CDeepFilter/lib/    libdf.dylib       (fetch-deps 생성, gitignore)
 engine/models/             DeepFilterNet3 모델 (fetch-deps 생성, gitignore)
 test/corpus/               평가 테스트셋 (maketestset 생성, gitignore) + README
 scripts/                   fetch-deps / install / verify / package / e2e / stability / quality-eval
-docs/                      architecture · voice-enhancer · enhance-behavior · STATUS · test-report · install
+docs/                      architecture · voice-enhancer · enhance-behavior · enhance-limitations-research · hq-model-integration · STATUS · test-report
 poc/model/                 DeepFilterNet 클론(gitignore) + run_poc.sh
 ```
 

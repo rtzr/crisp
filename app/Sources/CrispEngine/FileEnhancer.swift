@@ -54,6 +54,7 @@ public struct FileEnhanceReport: Sendable {
     public let output: URL
     public let inputPeakDb: Double
     public let outputPeakDb: Double
+    public let outputTruePeakDb: Double   // ITU-R BS.1770 inter-sample peak (−1 dBTP target)
     public let outputLUFS: Double
     public let loudnessGainDb: Double
 }
@@ -186,6 +187,56 @@ public final class FileEnhancer {
         return FileEnhanceReport(output: output,
                                  inputPeakDb: inputPeakDb,
                                  outputPeakDb: 20 * log10(Double(peak(processed)) + 1e-9),
+                                 outputTruePeakDb: TruePeak.truePeakDb(processed),
+                                 outputLUFS: outLUFS,
+                                 loudnessGainDb: gainDb)
+    }
+
+    /// File HQ via an EXTERNAL model worker (PRD 4.4): decode → run `model` out-of-process
+    /// → apply our HQ post-DSP (loudness + true-peak ceiling) → write. Temp WAVs are deleted
+    /// on completion/failure (PRD privacy §7.1). The built-in stages are bypassed; the external
+    /// model is the enhancer. Use when a licensed HQ model (Resemble/ClearerVoice/…) is installed.
+    @discardableResult
+    public func enhanceExternal(input: URL,
+                                output: URL,
+                                model: ExternalEnhancer,
+                                options: FileEnhanceOptions,
+                                progress: ((Double) -> Void)? = nil) throws -> FileEnhanceReport {
+        cancelled = false
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("crisp_ext_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }   // privacy: clean temp files
+        let inWav = work.appendingPathComponent("in.wav")
+        let outWav = work.appendingPathComponent("out.wav")
+
+        var samples = try decodeTo48kMono(input)
+        if let secs = options.previewSeconds {
+            let limit = Int(secs * 48_000)
+            if samples.count > limit { samples = Array(samples[0..<limit]) }
+        }
+        let inputPeakDb = 20 * log10(Double(peak(samples)) + 1e-9)
+        try AudioIO.writeWav(samples, to: inWav)
+        progress?(0.05)
+
+        try model.run(input: inWav, output: outWav)             // heavy out-of-process model
+        if cancelled { throw FileEnhanceError.cancelled }
+        progress?(0.85)
+
+        var processed = try AudioIO.read48kMono(outWav)
+        var outLUFS = Double.nan, gainDb = 0.0
+        if options.quality == .hq, let target = options.loudness.lufs {
+            let r = Loudness.normalize(&processed, toLUFS: target, sampleRate: 48_000, ceilingDb: -1.0)
+            gainDb = r.gainDb
+        }
+        outLUFS = Loudness.integratedLUFS(processed, sampleRate: 48_000)
+        progress?(0.95)
+
+        try write(processed, to: output, format: options.format)
+        progress?(1.0)
+        return FileEnhanceReport(output: output,
+                                 inputPeakDb: inputPeakDb,
+                                 outputPeakDb: 20 * log10(Double(peak(processed)) + 1e-9),
+                                 outputTruePeakDb: TruePeak.truePeakDb(processed),
                                  outputLUFS: outLUFS,
                                  loudnessGainDb: gainDb)
     }

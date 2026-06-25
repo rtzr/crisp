@@ -28,9 +28,12 @@
 ### 1. 대역폭 복원 / 음성 초해상 (BWE/SR)
 - **SOTA 방향**: 판별형(discriminative) 매핑은 regression-to-mean → 고역 over-smoothing.
   필드가 **생성형(diffusion/flow/bridge)** 으로 이동 중. ⚠️(출처 arxiv 2605.16681)
-- **AP-BWE** ⚠️ (arxiv [2401.06387](https://arxiv.org/abs/2401.06387)) — 진폭·위상 **병렬 예측
-  GAN**, 8/16/24k→48k. 리포트상 **CPU에서 18.1× 실시간(48k), 16k는 ~29×**, all-conv 구조라
-  ONNX 변환 친화적, **MIT(코드+가중치)**. → **실시간 BWE 1순위 후보**. (속도/라이선스는 검증 미완 → 재확인)
+- **AP-BWE** ✅검증(2026-06-25 재확인) (arxiv [2401.06387](https://arxiv.org/abs/2401.06387),
+  [github.com/yxlu-0102/AP-BWE](https://github.com/yxlu-0102/AP-BWE)) — 진폭·위상 **병렬 예측
+  GAN**(dual-stream). 입력 **8/12/16/24 kHz → 48 kHz**(및 2/4/8k→16k). 논문 명시
+  **CPU에서 18.1× 실시간**(48k 생성), GPU 292.3×. all-conv 구조 → ONNX 변환 친화적.
+  **라이선스: 코드+가중치 모두 MIT**(`weights_LICENSE.txt`로 확인) → 상용 가능.
+  → **실시간 BWE 1순위 후보** (단 공개 체크포인트는 causal/streaming이 아님 → causal PoC 필요).
 - ClearerVoice-Studio에 16k→48k **super-resolution** 포함 ⚠️ (파일 경로).
 - 후보(💡): mdctGAN, NU-Wave2, AudioSR(diffusion, 파일·느림). Resemble Enhance enhancer가 BWE 내장 ✅.
 - **권고**: 실시간 = AP-BWE를 causal/스트리밍으로 만들 수 있는지 PoC(현재 코드의 enhancer stage 자리).
@@ -55,7 +58,7 @@
 |---|---|---|---|---|---|---|
 | **Resemble Enhance** ✅ | latent **flow matching**(생성형) | denoise+왜곡복원+BWE | ❌ 없음(PyTorch CLI) | RTF 미공개 | 코드 MIT 주장 **반박됨**⚠️ → 검증 | **파일 1순위 후보**(라이선스 확인) |
 | **FINALLY** ✅ | **GAN**(HiFi++ +WavLM, 1-pass) | noise+reverb+BWE+mic | ❌(WavLM 미래컨텍스트) | RTF 0.03@V100 | 연구·가중치/라이선스 미확인 | **품질 최상**(MOS 4.54>Miipher), 파일·검증 |
-| **AnyEnhance** ✅ | masked generative | denoise+dereverb+declip+SR+TSE | ❌ | RTF 0.254@GPU, 363.6M | **비상용 추정**(검증 충돌)⚠️ | **레퍼런스만**(상용 불가 가능성↑) |
+| **AnyEnhance** ✅ | masked generative | denoise+dereverb+declip+SR+TSE | ❌ | RTF 0.254@GPU, 363.6M | 재현코드 MIT, **가중치 라이선스 없음**⚠️검증 | **레퍼런스만**(가중치 미라이선스 → 배포 불가) |
 | **Miipher-2** ✅ | **feature regression**(USM+WaveFit) | 범용 복원 | ❌ | RTF **0.0078**@가속기 | Google, 공개 상용가중치 없음 | **레퍼런스**(배포 불가) |
 | **NVIDIA RE-USE** | 범용 SE+BWE | 범용 | — | — | **NSCLv1 비상용** | **출시 제외**(PRD 확정) |
 | **Stream.FM** ✅ | frame-causal **flow matching** | SE 중심(통합은 반박 1-2) | ✅ **32ms/48ms**(24ms SE변형) | — | 연구최전선(2025.12) | **실시간 생성형의 미래** — watch |
@@ -102,17 +105,25 @@
 
 ## 라이선스 함정 (출시 전 필수 확인)
 
-- **코드 ≠ 가중치**: Resemble Enhance(MIT 주장 **반박**), NISQA(가중치 제한), RE-USE(NSCLv1 비상용),
-  AnyEnhance(비상용 가능성). HuggingFace 모델카드 license 별도 확인.
-- **비상용 확정/유력 → 출시 제외**: NVIDIA RE-USE(NSCLv1) ✅확정, AnyEnhance ⚠️, NISQA 가중치 ⚠️.
-- **상용 가능 유력**: AP-BWE(MIT 주장) ⚠️검증, ClearerVoice(Apache-2.0 주장) ⚠️검증, DeepFilter(현행 사용중) ✅.
+- **코드 ≠ 가중치**: Resemble Enhance(MIT 주장 **반박** → 재확인), NISQA(가중치 제한), RE-USE(NSCLv1 비상용),
+  AnyEnhance(코드 MIT지만 **가중치 무라이선스**). HuggingFace/ModelScope 모델카드 license 별도 확인.
+- **비상용/배포불가 → 출시 제외**: NVIDIA RE-USE(NSCLv1) ✅확정, AnyEnhance 가중치 무라이선스 ✅확정, NISQA 가중치 ⚠️.
+- **상용 가능 확인됨**: **AP-BWE 코드+가중치 MIT** ✅검증, **ClearerVoice 코드 Apache-2.0** ✅검증(가중치는 ModelScope에서 재확인),
+  DeepFilter(현행 사용중) ✅.
+
+> **검증 보강(2026-06-25)**: 세션 한도로 미검증이던 ⚠️ 항목을 1차 소스(GitHub/arxiv) 직접 확인.
+> AP-BWE = MIT(코드+가중치)·CPU 18.1×RT·8/12/16/24k→48k 확정. ClearerVoice = Apache-2.0·SR 16→48k 확정.
+> AnyEnhance = 재현 코드 MIT지만 공개 가중치에 라이선스 명시 없음 → 가중치 배포 불가(레퍼런스).
 
 ## 우선순위 로드맵
 
-1. **지금(자체, 의존 0)** — **true-peak 오버샘플 리미터** 구현(한계 #6 해소), 평가에 DNSMOS 연동.
-2. **다음(검증 후 PoC)** — 파일 HQ에 **Resemble Enhance** 또는 **ClearerVoice-Studio** 드롭인
-   (denoise+왜곡복원+BWE 일괄). **라이선스(가중치) 확정 → 벤치(품질/속도/WER) → `AudioProcessor` 어댑터**.
-3. **다음(실시간)** — **AP-BWE** causal PoC(ONNX/CoreML), DeepFilter 뒤 BWE stage로. WER/지연 검증.
+1. ~~**지금(자체)** — true-peak 오버샘플 리미터~~ **✅ 완료**(`TruePeak.swift`, BS.1770 4×, 파일 HQ가
+   −1 dBTP 준수·테스트 통과). 평가에 DNSMOS 연동은 추가 TODO.
+2. **다음(검증 후 PoC)** — 파일 HQ에 **ClearerVoice-Studio**(Apache-2.0 ✅) 우선 / **Resemble Enhance**
+   (가중치 라이선스 확인) 드롭인. **통합 seam·벤치 스캐폴드 구축 완료** →
+   [`hq-model-integration.md`](hq-model-integration.md) (`ExternalEnhancer` + `scripts/hq-model-poc.sh`).
+   남은 일: 모델 설치 → DSP 대비 벤치 → UI 노출.
+3. **다음(실시간)** — **AP-BWE**(MIT ✅, CPU 18.1×RT) causal/ONNX PoC, DeepFilter 뒤 BWE stage로.
 4. **watch(보류)** — Stream.FM(실시간 생성형), FINALLY(품질 상한 레퍼런스), Miipher-2/AnyEnhance/RE-USE(라이선스).
 
 ## 출처 (1차)
