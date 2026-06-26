@@ -17,6 +17,7 @@ PRD(`krisp_like_mac_prd_workplan.docx`)의 M0–M6 마일스톤을 **검증 가�
 | 4 | M4 / FILE-* | 파일 처리 | ✅ | **ffmpeg-free**(AVFoundation+libdf), mp3→m4a, mp4→wav |
 | 5 | M5 | 서명/notarization/패키징 | 🔶 | pkg 생성(앱+드라이버+2모델), **notarize는 Apple 계정 필요** |
 | 6 | M6 | 문서/라이선스/리포트 | ✅ | architecture/install/LICENSES/known-issues |
+| **VE** | **v0.2** | **Voice Enhancer 파이프라인** | ✅ | 2-stage 파이프라인 + DSP 인핸서, 4모드, 파일 HQ(LUFS/peak), `vetool` 검증 |
 
 ## 검증된 성공 기준 (PRD 1.4 / 8장 대비)
 
@@ -35,6 +36,22 @@ PRD(`krisp_like_mac_prd_workplan.docx`)의 M0–M6 마일스톤을 **검증 가�
 - ✅ **30분 연속 안정성: crash 0 · dropout 0** (PASS)
 - ✅ 객관 음질 DNSMOS: OVRL +0.55, BAK +1.45
 
+## Voice Enhancer 파이프라인 (PRD v0.2) — 이번 추가
+
+PRD `krisp_like_mac_voice_enhancer_prd_v02.docx` 구현. 상세: [`docs/voice-enhancer.md`](voice-enhancer.md).
+
+- ✅ **4개 처리 모드** — Off / Noise Cancellation / Voice Enhancer / Clean + Enhance (`ProcessingMode`, UI/영속화)
+- ✅ **2-stage 파이프라인** — `PipelineProcessor`(DeepFilter denoise → `VoiceEnhancer` DSP), 교체 가능 stage(PRD §4.5)
+- ✅ **DSP 인핸서** — HPF·톤 EQ(3종)·컴프레서·디에서·−1dBFS 리미터, 추가 지연 ≈ 0ms
+- ✅ **클릭 없는 전환** — 항상 in-path + dry→wet 40ms 램프, `wetMix=0` bit-identical 패스스루(검증)
+- ✅ **스트리밍 결정성** — `vetool`: aligned == chunked bit-identical, 리미터 안전, RTF enhancer 0.012 / clean+enhance 0.11
+- ✅ **파일 HQ** — Fast/HQ, 미리듣기(20초), LUFS 정규화(-16/-18) + peak 천장(-1dBFS), before/after 리포트
+- ✅ **외부 파일 HQ PoC** — ClearerVoice `MossFormer2_SE_48K` file-in/out 래퍼 + `filetool external` 검증,
+  12개 코퍼스 평균 SI-SDR 2.55→6.04 dB
+- ✅ **외부 파일 HQ UI** — ClearerVoice 명령/venv/체크포인트가 설치된 경우에만 "HQ 모델" 선택지 노출,
+  미설치 시 내장 DSP fallback
+- ✅ **번들 모델/가중치 추가 0** — 기본 DSP 인핸서는 생성형이 아니며 화자/발화를 보존. ClearerVoice는 설치된 외부 명령으로만 연결(PRD §9 M1 별도)
+
 ## 남은 항목 — 사람/계정/GUI 앱 필요 (자동화 불가)
 
 절차: [`docs/acceptance-checklist.md`](acceptance-checklist.md)
@@ -46,5 +63,5 @@ PRD(`krisp_like_mac_prd_workplan.docx`)의 M0–M6 마일스톤을 **검증 가�
 ## 다음 작업
 
 - end-to-end 실시간 검증 (마이크→모델→가상마이크→회의앱) — **드라이버 설치 후 가능**
-- limiter/AGC (PRD 6.2) — 선택적 음질 보호
+- 파일 HQ 모델 제품 노출 판단 — 사람 A/B 청취 + WER/DNSMOS/PESQ 등 추가 지표
 - Developer ID 서명 + notarization (Apple 계정)

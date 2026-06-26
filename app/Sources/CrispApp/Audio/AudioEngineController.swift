@@ -7,42 +7,47 @@ import CrispEngine
 private let audioLog = Logger(subsystem: "ai.rtzr.crisp", category: "audio")
 
 protocol AudioEngineControlling: AnyObject {
-    func start(inputUID: String?, strength: NoiseStrength, bypassed: Bool, lowLatency: Bool)
+    func start(config: AudioProcessingConfig, inputUID: String?, lowLatency: Bool)
     func stop()
-    func updateParameters(strength: NoiseStrength, bypassed: Bool)
+    func update(config: AudioProcessingConfig)
 }
 
 /// Live capture engine (PRD 6.2):
-///   physical mic capture → AVAudioConverter(→48k mono) → DeepFilter inference
-///   → ring buffer → AUHAL output → Crisp virtual device → loopback → meeting app
+///   physical mic capture → AVAudioConverter(→48k mono) → two-stage pipeline
+///   (DeepFilter denoise → Voice Enhancer DSP) → ring buffer → AUHAL output
+///   → Crisp virtual device → loopback → meeting app
 ///
 /// Any mic sample rate is supported: the converter normalizes to the model's 48 kHz mono.
 final class LiveAudioEngine: AudioEngineControlling {
     private weak var state: AppState?
     private let engine = AVAudioEngine()
-    private var suppressor: NoiseSuppressor = PassthroughSuppressor()
+    private var pipeline: PipelineProcessor?
     private var output: VirtualMicOutput?
     private var converter: AVAudioConverter?
+    private var converterInFormat: AVAudioFormat?   // format the current converter was built for
     private let canonical = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false)!
     private var running = false
     private var lastMeterNs: UInt64 = 0   // throttle gate for UI meter updates
+    private var inMeter: Float = 0         // smoothed input level  (audio thread only)
+    private var outMeter: Float = 0        // smoothed output level (audio thread only)
+    private static let meterDecay: Float = 0.82   // per ~10 ms callback → ~0.3 s fall time
 
     init(state: AppState) {
         self.state = state
     }
 
-    func start(inputUID: String?, strength: NoiseStrength, bypassed: Bool, lowLatency: Bool) {
+    func start(config: AudioProcessingConfig, inputUID: String?, lowLatency: Bool) {
         requestMicAccess { [weak self] granted in
             guard let self else { return }
             guard granted else {
                 self.setStatus(.error("마이크 권한이 거부되었습니다."))
                 return
             }
-            self.startLocked(inputUID: inputUID, strength: strength, bypassed: bypassed, lowLatency: lowLatency)
+            self.startLocked(config: config, inputUID: inputUID, lowLatency: lowLatency)
         }
     }
 
-    private func startLocked(inputUID: String?, strength: NoiseStrength, bypassed: Bool, lowLatency: Bool) {
+    private func startLocked(config: AudioProcessingConfig, inputUID: String?, lowLatency: Bool) {
         stop()
 
         if let uid = inputUID, let deviceID = Self.deviceID(forUID: uid) {
@@ -56,21 +61,27 @@ final class LiveAudioEngine: AudioEngineControlling {
             return
         }
 
-        // DeepFilter model: low-latency or full quality (PRD SET-01). Load here (not RT-safe).
+        // Noise Cancellation stage: DeepFilter model, low-latency or full (PRD SET-01).
+        // Load here (not RT-safe); fall back to passthrough if it fails.
         let model: DeepFilterSuppressor.Model = lowLatency ? .lowLatency : .full
+        let suppressor: NoiseSuppressor
         if let modelPath = DeepFilterSuppressor.modelPath(model),
-           let df = DeepFilterSuppressor(modelPath: modelPath,
-                                         attenuationLimitDb: strength.attenuationLimitDb,
-                                         bypassed: bypassed) {
+           let df = DeepFilterSuppressor(modelPath: modelPath) {
             suppressor = df
         } else {
             suppressor = PassthroughSuppressor()
         }
-        suppressor.attenuationLimitDb = strength.attenuationLimitDb
-        suppressor.bypassed = bypassed
+        // Two-stage pipeline (denoise → Voice Enhancer DSP). Mode/strength/tone come from config.
+        let pipe = PipelineProcessor(suppressor: suppressor, sampleRate: 48_000, config: config)
+        pipe.prepare(config: config)
+        pipeline = pipe
 
-        // Resampler: input (any rate, any channels) → 48 kHz mono for the model.
-        converter = AVAudioConverter(from: format, to: canonical)
+        // Resampler is built lazily in the tap from the *actual* delivered buffer format
+        // (see toCanonicalMono) — installing the tap with an explicit format throws an
+        // uncatchable ObjC "format mismatch" exception when the node negotiates a different
+        // rate (e.g. a 44.1 kHz built-in mic), so we let the tap use the node's own format.
+        converter = nil
+        converterInFormat = nil
 
         // PRD SET-02: log input / model / output sample rates (no PII).
         audioLog.info("engine start — input SR=\(format.sampleRate, privacy: .public)Hz ch=\(format.channelCount, privacy: .public) → model/virtual-mic SR=48000Hz mono")
@@ -84,20 +95,34 @@ final class LiveAudioEngine: AudioEngineControlling {
             setStatus(.error("가상 마이크가 설치되지 않았습니다. pkg 설치 후 다시 시도하세요."))
         }
 
-        input.installTap(onBus: 0, bufferSize: 480, format: format) { [weak self] buffer, _ in
+        inMeter = 0; outMeter = 0
+        // format: nil → use the node's own format (avoids the format-mismatch crash).
+        input.installTap(onBus: 0, bufferSize: 480, format: nil) { [weak self] buffer, _ in
             guard let self, let canonicalSamples = self.toCanonicalMono(buffer), !canonicalSamples.isEmpty else { return }
-            let inLevel = Self.rms(canonicalSamples)
-            let processed = self.suppressor.process(canonicalSamples)   // DeepFilter (0.97ms/hop)
+            // Two-stage pipeline: DeepFilter denoise (~0.97 ms/hop) → Voice Enhancer DSP.
+            // `process` returns only the complete model hops (carrying a sub-hop remainder),
+            // so `processed` may be shorter than the input or briefly empty.
+            let processed = self.pipeline?.process(canonicalSamples) ?? canonicalSamples
             if !processed.isEmpty {
                 processed.withUnsafeBufferPointer { self.output?.pushMono($0.baseAddress!, count: $0.count) }
             }
-            let outLevel = processed.isEmpty ? inLevel : Self.rms(processed)
+            // Peak-hold-with-decay envelopes: fast rise, smooth fall — stable, not jittery.
+            // The output envelope only decays on carry frames; it never mirrors the input
+            // (the old `processed.isEmpty ? inLevel` fallback made the output bar flicker and
+            // falsely track the input level).
+            self.inMeter = max(Self.level(canonicalSamples), self.inMeter * Self.meterDecay)
+            if processed.isEmpty {
+                self.outMeter *= Self.meterDecay
+            } else {
+                self.outMeter = max(Self.level(processed), self.outMeter * Self.meterDecay)
+            }
             // Throttle UI meter updates to ~15 Hz (the tap fires ~100 Hz). Flooding the main
             // thread with @Published updates was the UI-responsiveness bottleneck.
             let now = DispatchTime.now().uptimeNanoseconds
             if now &- self.lastMeterNs >= 66_000_000 {
                 self.lastMeterNs = now
-                DispatchQueue.main.async { self.state?.meters.set(input: inLevel, output: outLevel) }
+                let i = self.inMeter, o = self.outMeter
+                DispatchQueue.main.async { self.state?.meters.set(input: i, output: o) }
             }
         }
 
@@ -118,14 +143,17 @@ final class LiveAudioEngine: AudioEngineControlling {
         output?.stop()
         output = nil
         converter = nil
+        converterInFormat = nil
+        pipeline = nil
         running = false
+        inMeter = 0; outMeter = 0
         DispatchQueue.main.async { self.state?.meters.set(input: 0, output: 0) }
         setStatus(.stopped)
     }
 
-    func updateParameters(strength: NoiseStrength, bypassed: Bool) {
-        suppressor.attenuationLimitDb = strength.attenuationLimitDb
-        suppressor.bypassed = bypassed
+    /// Apply mode/strength/tone/bypass live — ramps inside the pipeline, no teardown (PRD 8.4).
+    func update(config: AudioProcessingConfig) {
+        pipeline?.update(config: config)
     }
 
     // MARK: - Helpers
@@ -146,7 +174,13 @@ final class LiveAudioEngine: AudioEngineControlling {
     }
 
     /// Convert any-rate/any-channel tap buffer → 48 kHz mono Float samples.
+    /// The converter is built (and rebuilt) from the buffer's actual format, since the tap
+    /// uses the node's own format (which may differ from the rate we read at setup time).
     private func toCanonicalMono(_ buffer: AVAudioPCMBuffer) -> [Float]? {
+        if converter == nil || !(converterInFormat?.isEqual(buffer.format) ?? false) {
+            converter = AVAudioConverter(from: buffer.format, to: canonical)
+            converterInFormat = buffer.format
+        }
         guard let converter else { return nil }
         let ratio = canonical.sampleRate / buffer.format.sampleRate
         let cap = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
@@ -162,7 +196,8 @@ final class LiveAudioEngine: AudioEngineControlling {
         return Array(UnsafeBufferPointer(start: ptr, count: n))
     }
 
-    private static func rms(_ samples: [Float]) -> Float {
+    /// Per-frame meter level: RMS mapped to 0…1 over a ~-60 dB floor.
+    private static func level(_ samples: [Float]) -> Float {
         guard !samples.isEmpty else { return 0 }
         var sum: Float = 0
         for s in samples { sum += s * s }

@@ -20,6 +20,9 @@ engine/models/
 models/*.onnx
 models/*.tar.gz
 
+# External HQ model checkpoints downloaded during local PoC runs
+/checkpoints/
+
 # macOS
 .DS_Store
 
@@ -27,6 +30,13 @@ models/*.tar.gz
 *.wav
 *.f32
 !test/fixtures/*.wav
+
+# Generated evaluation corpus + reports (reproduce: maketestset / quality-eval.sh / hq-model-poc.sh)
+/test/corpus/manifest.csv
+/test/corpus/out/
+/test/corpus/quality-report.csv
+/test/corpus/hq-poc/
+/test/corpus/hq-poc-report.csv
 
 # Internal PRD spec — not published
 *.docx

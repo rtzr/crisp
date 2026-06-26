@@ -8,6 +8,15 @@ Crisp가 사용하는 서드파티 구성요소와 상용 배포 가능 여부.
 | **tract** (tract-onnx/core/pulse) | 순수 Rust ONNX 추론 엔진 | MIT / Apache-2.0 (dual) | ✅ 가능 |
 | Crisp HAL 드라이버 코드 | 가상 마이크 | 자체 작성(원본). Apple Audio Server Plug-in 아키텍처 참고 | ✅ 자체 저작 |
 | Crisp 앱/엔진 코드 | UI, 실시간/파일 처리 | 자체 작성 | ✅ 자체 저작 |
+| Crisp Voice Enhancer DSP | EQ/컴프레서/디에서/리미터/LUFS (PRD v0.2) | 자체 작성(RBJ EQ cookbook·ITU-R BS.1770 공개 공식 기반, 코드 원본) | ✅ 자체 저작 |
+| ClearerVoice-Studio `clearvoice` + MossFormer2_SE_48K | 선택적 파일 HQ 외부 모델(Python/Torch 프로세스) | Apache-2.0(코드·가중치 README 확인) | ✅ 가능, **제품 번들 아님** |
+
+> **Voice Enhancer(PRD v0.2)는 신규 서드파티·모델 weight를 추가하지 않는다.** 인핸서를 생성형
+> 모델 대신 순수 DSP(자체 코드)로 구현했기 때문이다. ClearerVoice는 설치된 외부 명령이 있을 때만
+> out-of-process 파일 HQ 옵션으로 연결하며 앱/패키지에 Python·Torch·가중치를 번들하지 않는다. PRD가 후보로 든
+> LocalVQE(Apache-2.0), Resemble Enhance(MIT)는 추후 동일 `AudioProcessor` seam에 드롭인할
+> 수 있으나, 그 가중치·코드 라이선스는 **탑재 시점에 별도 BOM 확인 필요**(PRD §7.2, §9 M1).
+> NVIDIA RE-USE 등 비상용 모델은 출시 빌드 제외 원칙 유지.
 
 > **ffmpeg 의존 제거됨.** 파일 처리(Phase 4)는 AVFoundation(시스템 프레임워크) + libDF로 구현해
 > 외부 프로세스/ffmpeg 없이 동작한다. ffmpeg는 테스트 픽스처 생성에만 쓰이며 제품에 포함되지 않는다.

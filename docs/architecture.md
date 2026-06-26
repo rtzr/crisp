@@ -57,6 +57,31 @@ PRD 6장(권장 기술 아키텍처)을 구현 기준으로 구체화한 문서.
 **input stream**으로 loopback 되어 회의 앱이 "Noise Cancelled Microphone"으로 수신한다.
 (`driver/CrispAudioDriver/CrispAudioDriver.c` 의 `Crisp_DoIOOperation`)
 
+## Voice Enhancer 2-stage 파이프라인 (PRD v0.2)
+
+기존 단일 denoiser를 **교체 가능한 2-stage 그래프**로 확장했다(PRD §4.1/4.5). 상세:
+[`docs/voice-enhancer.md`](voice-enhancer.md).
+
+```
+입력(48k mono)
+   → [Stage 1] Noise Cancellation : DeepFilterSuppressor (atten = mode별, 0 = passthrough)
+   → [Stage 2] Voice Enhancer     : VoiceEnhancer (HPF→톤EQ→comp→de-ess→limiter, dry→wet 램프)
+   → 출력
+```
+
+| 구성 | 파일 | 역할 |
+|---|---|---|
+| `ProcessingMode` / `AudioProcessingConfig` / `AudioProcessor` | `CrispEngine/AudioProcessing.swift` | 모드·설정·교체 가능 stage 인터페이스(PRD §4.5) |
+| `PipelineProcessor` | `CrispEngine/PipelineProcessor.swift` | stage 그래프, 모드→파라미터 매핑, flush |
+| `VoiceEnhancer` | `CrispEngine/VoiceEnhancer.swift` | DSP 인핸서(zero-latency, 생성형 아님) |
+| `Biquad` / `EnvelopeFollower` | `CrispEngine/Biquad.swift` | RBJ 필터 + 엔벨로프(할당 없는 per-sample) |
+| `Loudness` | `CrispEngine/Loudness.swift` | BS.1770 LUFS 측정 + 정규화 + peak 천장(파일 HQ) |
+
+**모드는 라우팅을 바꾸지 않는다.** 두 stage 모두 항상 경로에 있고, 모드는 suppressor의
+attenuation과 enhancer의 dry→wet 블렌드만 조정한다 → 모드 전환 시 샘플 불연속/클릭 없음(§8.4).
+`wetMix==0`이면 enhancer 출력은 입력과 bit-identical(`vetool` 검증). 라이브 강도/톤 변경은
+필터 계수만 재계산(상태 보존)하므로 역시 클릭이 없다.
+
 ## libDF C-API (Phase 2 연동 지점)
 
 ```c

@@ -70,6 +70,80 @@ no-reference DNSMOS (1–5, 높을수록 좋음), noisy_snr0 샘플, 16kHz:
 | **30분 연속 안정성** (model+AUHAL+driver) | 1800s, 10/10 spot-check non-silent, **crash 0 · dropout 0** | ✅ |
 | 설치 패키지 (앱→/Applications, 드라이버→/Library) | relocation 버그 수정 후 검증 | ✅ |
 
+## Voice Enhancer 파이프라인 (PRD v0.2) — `vetool` / `filetool enhance`
+
+DSP 인핸서 + 2-stage 파이프라인. 구현/설계: [`voice-enhancer.md`](voice-enhancer.md).
+
+| 검증 항목 | 기대 | 측정 | 판정 |
+|---|---|---|---|
+| 비활성 인핸서 = 패스스루 | bit-identical | `wetMix=0` 출력 == 입력 | ✅ |
+| 스트리밍 결정성 | aligned == chunked | 임의 버퍼(137/480/53/911/256/1000) bit-identical | ✅ |
+| 리미터/클램프 안전 | peak ≤ full scale | 입력 1.5 트랜지언트 → 출력 peak **0.75** | ✅ |
+| 인핸스 효과 | 신호 변화 | Δenergy 측정됨 | ✅ |
+| RTF (enhancer 단독) | ≪ 1 | **0.012** (≈84×) | ✅ |
+| RTF (clean+enhance) | < 1 | **0.11** (≈8.9×) | ✅ |
+| 추가 지연 | §6.1 ≤ 50ms | DSP **0 ms**(IIR, no lookahead) + denoise hop | ✅ |
+
+파일 HQ 파이프라인 (`filetool enhance`, noisy_snr0.wav 10.6s):
+
+| 모드/품질 | 출력 LUFS | peak in→out | gain | 비고 |
+|---|---|---|---|---|
+| clean+enhance / HQ podcast | −19.3 | −3.5 → −1.0 dBFS | +6.9 dB | peak 천장에 의해 −16 미달(클립 방지) |
+| voice·warm / HQ meeting | −19.0 | −3.5 → −1.0 dBFS | +7.3 dB | |
+| noise / Fast | −23.7 | −3.5 → −3.9 dBFS | +0.0 dB | Fast=정규화 미적용 |
+| off / HQ podcast | −21.0 | −3.5 → −1.0 dBFS | +2.5 dB | 변환+정규화만 |
+
+출력 48k mono Int16 WAV / AAC m4a, 길이 정확 보존(10.595646s in=out). `wav/mp3/m4a/mp4/mov` 입력.
+
+파일 HQ 외부 모델 PoC (`scripts/hq-model-poc.sh`, 12개 코퍼스, `MossFormer2_SE_48K`):
+
+| 엔진 | 평균 SI-SDR | 평균 LUFS | true-peak | finite |
+|---|---:|---:|---:|---:|
+| 내장 DSP HQ | 2.55 dB | −19.41 | −1.00 dBTP | 12/12 |
+| ClearerVoice HQ | **6.04 dB** | −20.34 | −1.00 dBTP | 12/12 |
+
+ClearerVoice는 전체 샘플에서 DSP보다 SI-SDR이 높았다(평균 **+3.50 dB**). 통합 경로:
+`filetool external` → `scripts/clearvoice-wrapper.py` → HQ LUFS/true-peak post-DSP.
+
+> **한계**: LUFS는 BS.1770 근사(K-weighting + 절대/상대 게이팅). ClearerVoice 실모델은 파일 HQ
+> beta 후보이며 Python/Torch 외부 프로세스로만 연결한다. 제품 노출 전 사람 A/B 청취와 WER/DNSMOS/PESQ
+> 같은 지각/인식 지표가 필요하다.
+
+## 테스트셋 & 자동화 테스트 (PRD §8.1 / §8.2 / §9.4)
+
+**테스트셋** — 레포의 실제 음성·노이즈·잔향 자산에서 다운로드 없이 구성(`maketestset`),
+12개 카테고리: clean / noisy(SNR 0·5·10·20) / reverb / reverb+noise / clipping /
+bandlimit(8·16k) / 저음량 / hum. 재현: `test/corpus/README.md`.
+
+**XCTest** (`swift test --package-path app`):
+
+| Suite | 검증 | 결과 |
+|---|---|---|
+| BiquadTests (4) | 0dB=identity, LPF/HPF 거동, 엔벨로프 수렴 | ✅ |
+| VoiceEnhancerTests (5) | 패스스루 bit-identical·chunk 독립·리미터·톤·램프 | ✅ |
+| LoudnessTests (4) | 무음/선형성/정규화/peak 천장 | ✅ |
+| TruePeakTests (4) | inter-sample peak 감지·true-peak 천장 | ✅ |
+| MetricsTests (5) | RMS·peak·SI-SDR·지연보정 SI-SDR | ✅ |
+| PipelineTests (4) | 모드 라우팅·길이보존·라이브 전환 finite | ✅ |
+| IntegrationTests (4) | 코퍼스 생성·파일 end-to-end(모델) | ✅ |
+| ExternalEnhancerTests (2) | 외부 모델 seam·실패 전파 | ✅ |
+| **합계** | | **32 tests, 0 failures** |
+
+**배치 평가** (`scripts/quality-eval.sh` → `test/corpus/quality-report.csv`) — 코퍼스 ×
+{noise, voice, clean} HQ 처리. 모든 출력 finite·peak −1 dBFS 천장 준수 → **PASS(회귀 게이트)**.
+지연 보정 SI-SDR(noise mode):
+
+| 입력 | in SI-SDR | out SI-SDR | 비고 |
+|---|---|---|---|
+| noisy_snr0 | 0.00 | **+4.89** | 저-SNR denoise 이득 |
+| noisy_snr5 | 5.00 | 5.51 | 모델 상한(≈6dB) 수렴 |
+| noisy_snr10 | 10.0 | 6.00 | |
+| noisy_snr20 | 20.0 | 6.33 | 이미 깨끗 → fidelity 상한 |
+| clean | ∞ | 6.25 | DeepFilter clean 재구성 상한 |
+
+> SI-SDR 상한(≈6dB)은 신경망 denoiser의 pristine-clean 대비 재구성 한계(샘플 지표 특성)이며 결함 아님.
+> 지각 품질은 위 DNSMOS(OVRL +0.55) 참조. 단일 화자 합성셋이며 PRD §8.3 사람 blind 청취 대체 불가.
+
 ## 미검증 (사람/계정 필요 — 자동화 불가)
 
 - A/B blind 청취 ≥80% 개선 (PRD 8.3/8.4) — **사람 청취 필요**. 객관 proxy(DNSMOS)는 별도 측정 가능.
