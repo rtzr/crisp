@@ -44,7 +44,7 @@ ClearerVoice** 를 "1순위 PoC"(§1, §2.1, §9 M1)로 제시한다. 이들은 
 | FR-FILE-005 | 원본 비덮어쓰기, WAV/오디오교체 저장 | NSSavePanel 별도 출력, wav/m4a |
 | FR-FILE-006 | before/after loudness/peak 리포트 | `FileEnhanceReport` (LUFS·peak·gain) UI 표기 |
 | §4.3 step6 | -16 LUFS(podcast) / -18 LUFS(meeting) | `LoudnessTarget` (BS.1770 K-weighting + 게이팅) |
-| §4.3 step7 | -1.0 dBTP true-peak | sample-peak 천장 -1 dBFS 근사(아래 한계 참고) |
+| §4.3 step7 | -1.0 dBTP true-peak | `TruePeak.swift` 4× 오버샘플 true-peak 천장 |
 | SET-02 | model/runtime/sr/latency 진단 | Diagnostics 확장 (mode/강도/톤/추정 지연) |
 | §6.2 | High는 기본값 아님, 보수적 기본 | 기본 Clean+Enhance / Medium / Natural |
 
@@ -109,13 +109,15 @@ PRD §8.1 테스트셋과 §8.2 자동 평가, §9.4 "batch 처리 스크립트 
 clean / noisy(SNR 0·5·10·20) / reverb / reverb+noise / clipping / bandlimit(8·16k) / 저음량 / hum.
 생성: `maketestset test/corpus` (`test/corpus/README.md` 참고).
 
-**XCTest 스위트** (`swift test`) — **26개 테스트, 0 실패**:
+**XCTest 스위트** (`swift test`) — **32개 테스트, 0 실패**:
 - `BiquadTests` — 0dB peaking=identity, LPF가 HF 감쇠, HPF가 DC 제거, 엔벨로프 수렴
 - `VoiceEnhancerTests` — 비활성 패스스루 bit-identical, chunk 독립성, 리미터 full-scale 이내, 톤 프리셋 finite, 램프 클릭 없음
 - `LoudnessTests` — 무음=-inf, 음량 선형성(+20LU), 정규화 목표 도달, peak 천장 준수
+- `TruePeakTests` — inter-sample peak 감지, true-peak 천장 준수
 - `MetricsTests` — RMS/peak, SI-SDR(동일=∞, 노이즈↑=점수↓), **지연 보정 SI-SDR**(순수 지연 복원)
 - `PipelineTests` — Off/Noise 무채색, Clean+Enhance 변화+길이보존, 라이브 모드 전환 finite
 - `IntegrationTests`(자산/모델 있을 때) — 코퍼스 생성 유효성, 파일 end-to-end(길이 보존·천장·finite)
+- `ExternalEnhancerTests` — 외부 모델 seam, 비정상 명령 실패 전파
 
 **배치 평가** (`scripts/quality-eval.sh`) — 코퍼스 × 모드 처리 → `quality-report.csv`
 (LUFS/peak/SI-SDR). 비정상 출력(non-finite·클리핑) 시 exit 1 → **회귀 게이트**.
@@ -133,9 +135,9 @@ SI-SDR은 모델 지연을 cross-correlation으로 정렬 후 측정. 측정 결
 
 ## 한계 / 후속
 
-- **True-peak(-1 dBTP)** 는 4× 오버샘플링 없이 **sample-peak 천장**으로 근사(음성에서 보수적).
-  방송 수준 정밀 true-peak가 필요하면 oversampling 리미터로 교체.
+- **True-peak(-1 dBTP)** 는 `TruePeak.swift`의 4× 오버샘플링 경로로 검증한다.
 - **LUFS** 게이팅은 절대(-70)·상대(-10 LU) 게이트 구현, K-weighting은 BS.1770 근사 계수.
-- **LocalVQE / Resemble / ClearerVoice 실모델**: 동일 `AudioProcessor` seam에 래퍼로 드롭인
-  가능. 가중치 다운로드·벤치마크·라이선스 확인은 PRD §9 M1 별도 마일스톤.
+- **ClearerVoice 실모델**: 파일 HQ 외부 모델로 연결 완료. 설치된 명령/venv/체크포인트가 있을 때만
+  `FileTabView`의 "HQ 모델" 선택지로 노출한다.
+- **LocalVQE / Resemble 실모델**: 동일 seam에 래퍼로 드롭인 가능하나, 가중치·라이선스 확인은 별도.
 - A/B blind 청취(PRD §8.3) 및 회의 앱 실사용은 사람 검수 필요(`docs/acceptance-checklist.md`).

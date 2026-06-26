@@ -11,7 +11,7 @@
 #
 # External command env vars (use {in}/{out} placeholders; must accept/produce a 48k mono WAV):
 #   RESEMBLE_CMD="resemble-enhance-file {in} {out}"
-#   CLEARERVOICE_CMD="clearvoice-sr {in} {out}"
+#   CLEARERVOICE_CMD=".clearvoice.venv/bin/python scripts/clearvoice-wrapper.py {in} {out}"
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 CORPUS="$ROOT/test/corpus"; OUT="$CORPUS/hq-poc"; REPORT="$CORPUS/hq-poc-report.csv"
@@ -32,8 +32,11 @@ chmod +x resemble-enhance-file
 export RESEMBLE_CMD="$PWD/resemble-enhance-file {in} {out}"
 
 # ── ClearerVoice-Studio (Apache-2.0; FRCRN denoise / MossFormer2 / 16k→48k SR) ──────
-git clone https://github.com/modelscope/ClearerVoice-Studio   # 가중치는 ModelScope, 라이선스 확인
-# clearvoice Python API를 file-in/out 래퍼로 감싸 CLEARERVOICE_CMD 로 export (repo 예제 참고)
+python3 -m venv .clearvoice.venv && . .clearvoice.venv/bin/activate
+pip install --upgrade pip setuptools wheel
+pip install clearvoice==0.1.2
+# MossFormer2_SE_48K 가중치는 최초 실행 시 checkpoints/MossFormer2_SE_48K 로 다운로드된다.
+export CLEARERVOICE_CMD="$PWD/.clearvoice.venv/bin/python $PWD/scripts/clearvoice-wrapper.py {in} {out}"
 SETUP
 exit 0
 fi

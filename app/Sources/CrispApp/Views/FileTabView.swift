@@ -3,11 +3,76 @@ import UniformTypeIdentifiers
 import AVFoundation
 import CrispEngine
 
+struct FileHQEngineOption: Hashable, Identifiable {
+    let id: String
+    let label: String
+    let command: [String]?
+
+    static let builtIn = FileHQEngineOption(id: "dsp", label: "내장 DSP", command: nil)
+
+    var isExternal: Bool { command != nil }
+}
+
+enum FileHQEngineDiscovery {
+    static func available() -> [FileHQEngineOption] {
+        var options = [FileHQEngineOption.builtIn]
+        if let clearVoice = clearVoice() { options.append(clearVoice) }
+        return options
+    }
+
+    private static func clearVoice() -> FileHQEngineOption? {
+        let env = ProcessInfo.processInfo.environment
+        if let raw = env["CRISP_CLEARERVOICE_CMD"] ?? env["CLEARERVOICE_CMD"],
+           !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return FileHQEngineOption(id: "clearervoice", label: "ClearerVoice", command: ["/bin/zsh", "-lc", raw])
+        }
+
+        for root in candidateRoots() {
+            let python = root.appendingPathComponent(".clearvoice.venv/bin/python")
+            let wrapper = root.appendingPathComponent("scripts/clearvoice-wrapper.py")
+            let checkpoint = root.appendingPathComponent("checkpoints/MossFormer2_SE_48K/last_best_checkpoint.pt")
+            let fm = FileManager.default
+            if fm.isExecutableFile(atPath: python.path),
+               fm.isReadableFile(atPath: wrapper.path),
+               fm.fileExists(atPath: checkpoint.path) {
+                return FileHQEngineOption(id: "clearervoice", label: "ClearerVoice",
+                                          command: [python.path, wrapper.path, "{in}", "{out}"])
+            }
+        }
+        return nil
+    }
+
+    private static func candidateRoots() -> [URL] {
+        var seeds: [URL] = []
+        let env = ProcessInfo.processInfo.environment
+        if let root = env["CRISP_REPO_ROOT"] { seeds.append(URL(fileURLWithPath: root, isDirectory: true)) }
+        seeds.append(URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
+        if let executable = Bundle.main.executableURL {
+            seeds.append(executable.deletingLastPathComponent())
+        }
+
+        var roots: [URL] = []
+        var seen = Set<String>()
+        for seed in seeds {
+            var url = seed.standardizedFileURL
+            while true {
+                let path = url.path
+                if seen.insert(path).inserted { roots.append(url) }
+                let parent = url.deletingLastPathComponent()
+                if parent.path == path { break }
+                url = parent
+            }
+        }
+        return roots
+    }
+}
+
 @MainActor
 final class FileTabModel: ObservableObject {
     @Published var inputURL: URL?
     @Published var mode: ProcessingMode = .cleanAndEnhance
     @Published var quality: FileQuality = .hq
+    @Published var hqEngine: FileHQEngineOption
     @Published var enhanceStrength: EnhanceStrength = .medium
     @Published var tonePreset: TonePreset = .natural
     @Published var noiseStrength: NoiseStrength = .high
@@ -24,6 +89,12 @@ final class FileTabModel: ObservableObject {
     private let enhancer = FileEnhancer()
     private var player: AVAudioPlayer?
     private var lastPreview: URL?
+    let hqEngineOptions: [FileHQEngineOption]
+
+    init(hqEngineOptions: [FileHQEngineOption] = FileHQEngineDiscovery.available()) {
+        self.hqEngineOptions = hqEngineOptions
+        self.hqEngine = hqEngineOptions.first ?? .builtIn
+    }
 
     func setInput(_ url: URL) {
         inputURL = url; results = []; report = nil; errorText = nil; progress = 0; statusText = ""
@@ -37,19 +108,40 @@ final class FileTabModel: ObservableObject {
                            loudness: loudness, format: format, previewSeconds: previewSeconds)
     }
 
+    var usesExternalHQ: Bool {
+        quality == .hq && hqEngine.isExternal
+    }
+
+    private var selectedExternalEnhancer: ExternalEnhancer? {
+        guard quality == .hq, let command = hqEngine.command else { return nil }
+        return ExternalEnhancer(name: hqEngine.id, command: command)
+    }
+
+    private var outputSuffix: String {
+        selectedExternalEnhancer == nil ? "crisp" : "crisp_\(hqEngine.id)"
+    }
+
     /// Full-file processing → user-chosen output (PRD FR-FILE-005: never overwrites the input).
     func start() {
         guard let input = inputURL, !isProcessing else { return }
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = input.deletingPathExtension().lastPathComponent + "_crisp." + format.ext
+        panel.nameFieldStringValue = input.deletingPathExtension().lastPathComponent + "_\(outputSuffix)." + format.ext
         panel.allowedContentTypes = [format == .wav ? .wav : .mpeg4Audio]
         guard panel.runModal() == .OK, let output = panel.url else { return }
         let opts = options(), enhancer = self.enhancer
+        let external = selectedExternalEnhancer
         begin("처리 중…")
         Task.detached {
             do {
-                let r = try enhancer.enhance(input: input, output: output, options: opts) { p in
-                    Task { @MainActor in self.progress = p }
+                let r: FileEnhanceReport
+                if let external {
+                    r = try enhancer.enhanceExternal(input: input, output: output, model: external, options: opts) { p in
+                        Task { @MainActor in self.progress = p }
+                    }
+                } else {
+                    r = try enhancer.enhance(input: input, output: output, options: opts) { p in
+                        Task { @MainActor in self.progress = p }
+                    }
                 }
                 await MainActor.run { self.done([output], report: r) }
             } catch { await MainActor.run { self.fail(error) } }
@@ -61,14 +153,21 @@ final class FileTabModel: ObservableObject {
         guard let input = inputURL, !isProcessing else { return }
         if let old = lastPreview { try? FileManager.default.removeItem(at: old) }
         let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("crisp_preview_\(UInt32(truncatingIfNeeded: input.hashValue)).\(format.ext)")
+            .appendingPathComponent("crisp_preview_\(hqEngine.id)_\(UInt32(truncatingIfNeeded: input.hashValue)).\(format.ext)")
         lastPreview = tmp
         let opts = options(previewSeconds: 20), enhancer = self.enhancer
+        let external = selectedExternalEnhancer
         begin("미리듣기 생성 중…")
         Task.detached {
             do {
-                _ = try enhancer.enhance(input: input, output: tmp, options: opts) { p in
-                    Task { @MainActor in self.progress = p }
+                if let external {
+                    _ = try enhancer.enhanceExternal(input: input, output: tmp, model: external, options: opts) { p in
+                        Task { @MainActor in self.progress = p }
+                    }
+                } else {
+                    _ = try enhancer.enhance(input: input, output: tmp, options: opts) { p in
+                        Task { @MainActor in self.progress = p }
+                    }
                 }
                 await MainActor.run { self.isProcessing = false; self.statusText = "미리듣기 재생"; self.play(tmp) }
             } catch { await MainActor.run { self.fail(error) } }
@@ -120,26 +219,36 @@ struct FileTabView: View {
     private var settings: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                Picker("처리 모드", selection: $model.mode) {
-                    ForEach(ProcessingMode.allCases) { Text($0.label).tag($0) }
-                }
                 Picker("품질", selection: $model.quality) {
                     Text("빠르게 (Fast)").tag(FileQuality.fast)
                     Text("고품질 (HQ)").tag(FileQuality.hq)
                 }
                 .pickerStyle(.segmented)
 
-                if model.mode == .noiseCancellation || model.mode == .cleanAndEnhance {
-                    Picker("노이즈 강도", selection: $model.noiseStrength) {
-                        ForEach(NoiseStrength.allCases) { Text($0.label).tag($0) }
+                if model.quality == .hq && model.hqEngineOptions.count > 1 {
+                    Picker("HQ 모델", selection: $model.hqEngine) {
+                        ForEach(model.hqEngineOptions) { option in
+                            Text(option.label).tag(option)
+                        }
                     }
                 }
-                if model.mode.usesEnhancer {
-                    Picker("인핸스 강도", selection: $model.enhanceStrength) {
-                        ForEach(EnhanceStrength.allCases) { Text($0.label).tag($0) }
+
+                if !model.usesExternalHQ {
+                    Picker("처리 모드", selection: $model.mode) {
+                        ForEach(ProcessingMode.allCases) { Text($0.label).tag($0) }
                     }
-                    Picker("톤", selection: $model.tonePreset) {
-                        ForEach(TonePreset.allCases) { Text($0.label).tag($0) }
+                    if model.mode == .noiseCancellation || model.mode == .cleanAndEnhance {
+                        Picker("노이즈 강도", selection: $model.noiseStrength) {
+                            ForEach(NoiseStrength.allCases) { Text($0.label).tag($0) }
+                        }
+                    }
+                    if model.mode.usesEnhancer {
+                        Picker("인핸스 강도", selection: $model.enhanceStrength) {
+                            ForEach(EnhanceStrength.allCases) { Text($0.label).tag($0) }
+                        }
+                        Picker("톤", selection: $model.tonePreset) {
+                            ForEach(TonePreset.allCases) { Text($0.label).tag($0) }
+                        }
                     }
                 }
                 if model.quality == .hq {

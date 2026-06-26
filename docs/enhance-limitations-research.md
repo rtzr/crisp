@@ -108,7 +108,7 @@
 - **코드 ≠ 가중치**: Resemble Enhance(MIT 주장 **반박** → 재확인), NISQA(가중치 제한), RE-USE(NSCLv1 비상용),
   AnyEnhance(코드 MIT지만 **가중치 무라이선스**). HuggingFace/ModelScope 모델카드 license 별도 확인.
 - **비상용/배포불가 → 출시 제외**: NVIDIA RE-USE(NSCLv1) ✅확정, AnyEnhance 가중치 무라이선스 ✅확정, NISQA 가중치 ⚠️.
-- **상용 가능 확인됨**: **AP-BWE 코드+가중치 MIT** ✅검증, **ClearerVoice 코드 Apache-2.0** ✅검증(가중치는 ModelScope에서 재확인),
+- **상용 가능 확인됨**: **AP-BWE 코드+가중치 MIT** ✅검증, **ClearerVoice 코드+MossFormer2_SE_48K 가중치 Apache-2.0** ✅검증,
   DeepFilter(현행 사용중) ✅.
 
 > **검증 보강(2026-06-25)**: 세션 한도로 미검증이던 ⚠️ 항목을 1차 소스(GitHub/arxiv) 직접 확인.
@@ -119,12 +119,15 @@
 
 1. ~~**지금(자체)** — true-peak 오버샘플 리미터~~ **✅ 완료**(`TruePeak.swift`, BS.1770 4×, 파일 HQ가
    −1 dBTP 준수·테스트 통과). 평가에 DNSMOS 연동은 추가 TODO.
-2. **다음(검증 후 PoC)** — 파일 HQ에 **ClearerVoice-Studio**(Apache-2.0 ✅) 우선 / **Resemble Enhance**
-   (가중치 라이선스 확인) 드롭인. **통합 seam·벤치 스캐폴드 구축 완료** →
-   [`hq-model-integration.md`](hq-model-integration.md) (`ExternalEnhancer` + `scripts/hq-model-poc.sh`).
-   남은 일: 모델 설치 → DSP 대비 벤치 → UI 노출.
+2. ~~**다음(검증 후 PoC)** — 파일 HQ에 **ClearerVoice-Studio**(Apache-2.0 ✅) 우선~~ **✅ 완료**:
+   `ExternalEnhancer` + `scripts/clearvoice-wrapper.py` + `scripts/hq-model-poc.sh`로 DSP 대비 벤치 완료
+   (12개 코퍼스 평균 SI-SDR 2.55→6.04 dB, +3.50 dB). 상세:
+   [`hq-model-integration.md`](hq-model-integration.md).
+   `FileTabView` UI 노출도 완료(설치 시 ClearerVoice 선택, 미설치 시 DSP fallback).
+   남은 일: 사람/인식 품질 검증.
 3. **다음(실시간)** — **AP-BWE**(MIT ✅, CPU 18.1×RT) causal/ONNX PoC, DeepFilter 뒤 BWE stage로.
-4. **watch(보류)** — Stream.FM(실시간 생성형), FINALLY(품질 상한 레퍼런스), Miipher-2/AnyEnhance/RE-USE(라이선스).
+4. **watch(보류)** — Resemble Enhance(가중치 라이선스 확인), Stream.FM(실시간 생성형),
+   FINALLY(품질 상한 레퍼런스), Miipher-2/AnyEnhance/RE-USE(라이선스).
 
 ## 출처 (1차)
 

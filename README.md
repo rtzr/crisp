@@ -66,12 +66,14 @@ open build/Crisp-0.1.0.pkg
 **파일**: 설정 창 → 파일 탭 → 오디오/비디오(wav/mp3/m4a/mp4/mov) 드래그앤드롭 →
 처리 모드 + 품질(Fast/HQ) + 톤 + 음량 정규화(-16/-18 LUFS) 선택 → **미리듣기(20초)** 로 결과 방향 확인 후
 **음성 개선 시작**. 원본은 덮어쓰지 않고 wav/m4a로 저장하며 before/after LUFS·peak 리포트를 표시.
+ClearerVoice가 외부 명령/venv로 설치되어 있으면 HQ에서 "HQ 모델" 선택지가 나타나고, 없으면 내장 DSP만 사용한다.
 
 ## 검증 / 테스트
 
 ```sh
-swift test --package-path app      # 단위·통합 테스트 (26개: DSP·파이프라인·LUFS·메트릭·파일 end-to-end)
+swift test --package-path app      # 단위·통합 테스트 (32개: DSP·파이프라인·LUFS·true-peak·외부 모델 seam)
 ./scripts/quality-eval.sh          # 테스트셋 생성+배치 처리 → quality-report.csv (회귀 게이트)
+./scripts/hq-model-poc.sh          # 파일 HQ 외부 모델 PoC (CLEARERVOICE_CMD/RESEMBLE_CMD 설정 시 비교)
 ./poc/model/run_poc.sh             # 모델 RTF·노이즈 감소
 ./scripts/e2e-test.sh              # end-to-end: model→가상마이크→녹음 (드라이버 설치 필요)
 ./scripts/stability-test.sh 1800   # 30분 안정성 (crash/dropout)
@@ -98,7 +100,7 @@ app/Package.swift          SwiftPM: CDeepFilter / CrispEngine / CrispApp / dftoo
 engine/CDeepFilter/lib/    libdf.dylib       (fetch-deps 생성, gitignore)
 engine/models/             DeepFilterNet3 모델 (fetch-deps 생성, gitignore)
 test/corpus/               평가 테스트셋 (maketestset 생성, gitignore) + README
-scripts/                   fetch-deps / install / verify / package / e2e / stability / quality-eval
+scripts/                   fetch-deps / install / verify / package / e2e / stability / quality-eval / hq-model-poc
 docs/                      architecture · voice-enhancer · enhance-behavior · enhance-limitations-research · hq-model-integration · STATUS · test-report
 poc/model/                 DeepFilterNet 클론(gitignore) + run_poc.sh
 ```
@@ -114,7 +116,7 @@ poc/model/                 DeepFilterNet 클론(gitignore) + run_poc.sh
 | 2 실시간 엔진 | capture→model→가상마이크 | ✅ end-to-end loopback |
 | 3 앱 | 메뉴바/온보딩/설정 | ✅ |
 | 4 파일 처리 | ffmpeg-free (AVFoundation) | ✅ mp3→m4a, mp4→wav |
-| VE Voice Enhancer (v0.2) | 2-stage 파이프라인 + DSP 인핸서, 4모드, 파일 HQ | ✅ vetool 검증, RTF 0.11 |
+| VE Voice Enhancer (v0.2) | 2-stage 파이프라인 + DSP 인핸서, 4모드, 파일 HQ | ✅ vetool 검증, 외부 HQ PoC |
 | 5 패키징 | 서명/notarization/pkg | 🔶 pkg ✅, notarize는 Apple 계정 |
 
 ---

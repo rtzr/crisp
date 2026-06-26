@@ -95,8 +95,19 @@ DSP 인핸서 + 2-stage 파이프라인. 구현/설계: [`voice-enhancer.md`](vo
 
 출력 48k mono Int16 WAV / AAC m4a, 길이 정확 보존(10.595646s in=out). `wav/mp3/m4a/mp4/mov` 입력.
 
-> **한계**: true-peak(-1 dBTP)는 오버샘플링 없이 sample-peak 천장으로 근사. LUFS는 BS.1770
-> 근사(K-weighting + 절대/상대 게이팅). LocalVQE/Resemble 실모델은 동일 seam 드롭인(PRD §9 M1 별도).
+파일 HQ 외부 모델 PoC (`scripts/hq-model-poc.sh`, 12개 코퍼스, `MossFormer2_SE_48K`):
+
+| 엔진 | 평균 SI-SDR | 평균 LUFS | true-peak | finite |
+|---|---:|---:|---:|---:|
+| 내장 DSP HQ | 2.55 dB | −19.41 | −1.00 dBTP | 12/12 |
+| ClearerVoice HQ | **6.04 dB** | −20.34 | −1.00 dBTP | 12/12 |
+
+ClearerVoice는 전체 샘플에서 DSP보다 SI-SDR이 높았다(평균 **+3.50 dB**). 통합 경로:
+`filetool external` → `scripts/clearvoice-wrapper.py` → HQ LUFS/true-peak post-DSP.
+
+> **한계**: LUFS는 BS.1770 근사(K-weighting + 절대/상대 게이팅). ClearerVoice 실모델은 파일 HQ
+> beta 후보이며 Python/Torch 외부 프로세스로만 연결한다. 제품 노출 전 사람 A/B 청취와 WER/DNSMOS/PESQ
+> 같은 지각/인식 지표가 필요하다.
 
 ## 테스트셋 & 자동화 테스트 (PRD §8.1 / §8.2 / §9.4)
 
@@ -111,10 +122,12 @@ bandlimit(8·16k) / 저음량 / hum. 재현: `test/corpus/README.md`.
 | BiquadTests (4) | 0dB=identity, LPF/HPF 거동, 엔벨로프 수렴 | ✅ |
 | VoiceEnhancerTests (5) | 패스스루 bit-identical·chunk 독립·리미터·톤·램프 | ✅ |
 | LoudnessTests (4) | 무음/선형성/정규화/peak 천장 | ✅ |
+| TruePeakTests (4) | inter-sample peak 감지·true-peak 천장 | ✅ |
 | MetricsTests (5) | RMS·peak·SI-SDR·지연보정 SI-SDR | ✅ |
 | PipelineTests (4) | 모드 라우팅·길이보존·라이브 전환 finite | ✅ |
 | IntegrationTests (4) | 코퍼스 생성·파일 end-to-end(모델) | ✅ |
-| **합계** | | **26 tests, 0 failures** |
+| ExternalEnhancerTests (2) | 외부 모델 seam·실패 전파 | ✅ |
+| **합계** | | **32 tests, 0 failures** |
 
 **배치 평가** (`scripts/quality-eval.sh` → `test/corpus/quality-report.csv`) — 코퍼스 ×
 {noise, voice, clean} HQ 처리. 모든 출력 finite·peak −1 dBFS 천장 준수 → **PASS(회귀 게이트)**.
